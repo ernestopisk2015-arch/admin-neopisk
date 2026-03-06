@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#e85d00">
+<title>NeoPisk Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f7f5f0;
+  --surface:#ffffff;
+  --surface2:#f0ede6;
+  --border:#e2ddd5;
+  --text:#1a1614;
+  --text2:#4a4540;
+  --text3:#8a8278;
+  --orange:#e85d00;
+  --orange-bg:#fff3eb;
+  --orange-mid:#ffd5b8;
+  --green:#0d7a3e;
+  --green-bg:#e8f7ee;
+  --red:#c8200a;
+  --red-bg:#fde8e5;
+  --blue:#1a5cd8;
+  --blue-bg:#e8eeff;
+  --yellow:#c89500;
+  --yellow-bg:#fff8de;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.06);
+  --shadow:0 4px 12px rgba(0,0,0,.08);
+  --shadow-lg:0 12px 32px rgba(0,0,0,.12);
+  --sidebar:240px;
+  --radius:14px;
+  --font-head:'Syne',sans-serif;
+  --font-body:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-body);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* LOGIN */
+#login-screen{
+  position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:var(--bg);z-index:1000;
+}
+.login-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:20px;
+  padding:48px 40px;width:min(380px,90vw);box-shadow:var(--shadow-lg);
+  animation:fadeIn .4s ease;
+}
+.login-logo{font-size:40px;text-align:center;margin-bottom:8px}
+.login-title{font-family:var(--font-head);font-size:26px;text-align:center;color:var(--text);margin-bottom:4px}
+.login-sub{text-align:center;color:var(--text3);font-size:12px;margin-bottom:32px}
+.login-label{font-size:11px;color:var(--text2);margin-bottom:6px;display:block;text-transform:uppercase;letter-spacing:.08em}
+.login-input{
+  width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;
+  font-family:var(--font-body);font-size:14px;background:var(--surface2);color:var(--text);
+  outline:none;transition:border .2s;margin-bottom:16px;
+}
+.login-input:focus{border-color:var(--orange)}
+.login-btn{
+  width:100%;padding:13px;background:var(--orange);color:#fff;border:none;border-radius:11px;
+  font-family:var(--font-head);font-size:15px;font-weight:700;cursor:pointer;
+  transition:opacity .15s,transform .1s;
+}
+.login-btn:hover{opacity:.9}
+.login-btn:active{transform:scale(.98)}
+.login-err{color:var(--red);font-size:12px;margin-top:-8px;margin-bottom:12px;display:none}
+
+/* APP SHELL */
+#app{display:none;height:100vh;display:none;flex-direction:column}
+#app.visible{display:flex}
+
+.topbar{
+  height:56px;background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 16px;gap:12px;position:sticky;top:0;z-index:50;
+  box-shadow:var(--shadow-sm);
+}
+.topbar-menu{
+  width:36px;height:36px;border:none;background:var(--surface2);border-radius:9px;
+  cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--border);
+}
+.topbar-title{font-family:var(--font-head);font-size:16px;font-weight:800;flex:1;color:var(--text)}
+.topbar-status{
+  display:flex;align-items:center;gap:6px;font-size:11px;color:var(--green);
+  background:var(--green-bg);padding:5px 10px;border-radius:20px;border:1px solid #b8e8cc;
+}
+.topbar-status::before{content:'';width:7px;height:7px;background:var(--green);border-radius:50%;animation:pulse 2s infinite}
+.topbar-clock{font-size:12px;color:var(--text2);background:var(--surface2);padding:5px 10px;border-radius:20px;border:1px solid var(--border)}
+
+.main-wrap{display:flex;flex:1;overflow:hidden}
+
+/* SIDEBAR */
+#sidebar{
+  width:var(--sidebar);background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow-y:auto;transition:transform .3s ease;
+  flex-shrink:0;
+}
+.sb-head{padding:20px 16px 12px;border-bottom:1px solid var(--border)}
+.sb-logo{display:flex;align-items:center;gap:10px}
+.sb-logo-icon{font-size:22px}
+.sb-logo-text{font-family:var(--font-head);font-size:15px;font-weight:800;color:var(--text)}
+.sb-logo-ver{font-size:10px;color:var(--text3);background:var(--surface2);padding:2px 6px;border-radius:6px;border:1px solid var(--border)}
+.sb-nav{padding:10px 8px;flex:1}
+.sb-item{
+  display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;
+  cursor:pointer;color:var(--text2);font-size:13px;margin-bottom:2px;transition:all .15s;
+  border:1px solid transparent;
+}
+.sb-item:hover{background:var(--surface2);color:var(--text)}
+.sb-item.active{background:var(--orange-bg);color:var(--orange);border-color:var(--orange-mid);font-weight:600}
+.sb-item .icon{font-size:16px;width:22px;text-align:center}
+.sb-foot{padding:12px 16px;border-top:1px solid var(--border)}
+.sb-user{display:flex;align-items:center;gap:10px}
+.sb-avatar{width:32px;height:32px;background:var(--orange);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px}
+.sb-uname{font-size:12px;font-weight:600;color:var(--text)}
+.sb-urole{font-size:10px;color:var(--text3)}
+
+/* OVERLAY */
+#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:49;backdrop-filter:blur(2px)}
+
+/* CONTENT */
+.content{flex:1;overflow-y:auto;padding:24px}
+.view{display:none;animation:slideUp .3s ease}
+.view.active{display:block}
+
+/* CARDS / COMPONENTS */
+.section-title{font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--text);margin-bottom:16px}
+.section-sub{font-size:12px;color:var(--text3);margin-bottom:20px;margin-top:-10px}
+
+.k4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.k3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+.k2{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:20px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
+.g3{display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:20px}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow-sm)}
+.card-title{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+
+.kpi-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;position:relative;overflow:hidden;box-shadow:var(--shadow-sm);
+}
+.kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.kpi-card.orange::before{background:var(--orange)}
+.kpi-card.green::before{background:var(--green)}
+.kpi-card.red::before{background:var(--red)}
+.kpi-card.blue::before{background:var(--blue)}
+.kpi-icon{font-size:20px;margin-bottom:8px}
+.kpi-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.kpi-value{font-family:var(--font-head);font-size:26px;font-weight:800;color:var(--text);line-height:1}
+.kpi-sub{font-size:11px;color:var(--text3);margin-top:4px}
+
+.alert-box{border-radius:var(--radius);padding:14px 16px;margin-bottom:12px;border:1px solid}
+.alert-box.red{background:var(--red-bg);border-color:#f5bfbb;color:var(--red)}
+.alert-box.yellow{background:var(--yellow-bg);border-color:#f5e8b0;color:var(--yellow)}
+.alert-box.green{background:var(--green-bg);border-color:#b8e8cc;color:var(--green)}
+.alert-head{font-weight:700;font-size:13px;margin-bottom:4px}
+.alert-body{font-size:12px;opacity:.85}
+
+.chip{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600}
+.chip.green{background:var(--green-bg);color:var(--green)}
+.chip.red{background:var(--red-bg);color:var(--red)}
+.chip.orange{background:var(--orange-bg);color:var(--orange)}
+.chip.yellow{background:var(--yellow-bg);color:var(--yellow)}
+.chip.blue{background:var(--blue-bg);color:var(--blue)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{
+  background:var(--surface2);padding:10px 12px;text-align:left;
+  font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);
+  border-bottom:1px solid var(--border);font-weight:600;
+  position:sticky;top:0;
+}
+tbody td{padding:11px 12px;border-bottom:1px solid var(--border);color:var(--text2)}
+tbody tr:hover td{background:var(--surface2)}
+tbody tr:last-child td{border-bottom:none}
+
+.map-box{
+  background:linear-gradient(145deg,#d8f0e2,#c8e8d5);
+  border:1px solid #b0d8c0;border-radius:var(--radius);height:220px;
+  position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;
+}
+.map-grid{
+  position:absolute;inset:0;
+  background-image:linear-gradient(rgba(0,100,50,.1) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,100,50,.1) 1px,transparent 1px);
+  background-size:30px 30px;
+}
+.map-car{position:absolute;font-size:18px;animation:moveCar 4s infinite alternate ease-in-out}
+.map-pin{position:absolute;font-size:20px}
+.map-label{position:absolute;font-size:10px;background:rgba(255,255,255,.85);padding:2px 6px;border-radius:6px;font-weight:600}
+
+.progress-wrap{margin-bottom:12px}
+.progress-label{display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:5px}
+.progress-bar{height:8px;background:var(--surface2);border-radius:20px;overflow:hidden;border:1px solid var(--border)}
+.progress-fill{height:100%;border-radius:20px;transition:width .6s ease}
+.progress-fill.orange{background:var(--orange)}
+.progress-fill.green{background:var(--green)}
+.progress-fill.blue{background:var(--blue)}
+
+.bar-chart{display:flex;align-items:flex-end;gap:8px;height:100px;padding:8px 0}
+.bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.bar{width:100%;background:var(--orange-mid);border-radius:4px 4px 0 0;transition:height .6s ease;min-width:20px;position:relative;cursor:pointer}
+.bar:hover{background:var(--orange)}
+.bar-val{font-size:10px;color:var(--text3);position:absolute;top:-16px;width:100%;text-align:center}
+.bar-day{font-size:10px;color:var(--text3)}
+
+.schema-table{width:100%;font-size:12px;border-collapse:collapse}
+.schema-table td{padding:8px 12px;border-bottom:1px solid var(--border)}
+.schema-table td:first-child{color:var(--orange);font-weight:600;width:140px}
+.schema-table td:nth-child(2){color:var(--blue);width:100px}
+.schema-table td:last-child{color:var(--text3)}
+.schema-section{background:var(--surface2);padding:12px 16px;border-radius:10px;margin-bottom:12px}
+.schema-head{font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.badge{font-size:10px;padding:2px 6px;border-radius:5px;background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange-mid)}
+
+.algo-steps{display:flex;flex-direction:column;gap:12px}
+.algo-step{display:flex;gap:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.algo-num{
+  width:32px;height:32px;background:var(--orange);color:#fff;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;font-family:var(--font-head);
+  font-weight:800;font-size:15px;flex-shrink:0;
+}
+.algo-body{}
+.algo-title{font-weight:700;font-size:13px;color:var(--text);margin-bottom:4px}
+.algo-desc{font-size:12px;color:var(--text3);line-height:1.6}
+.algo-code{
+  background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+  padding:8px 12px;font-size:11px;color:var(--blue);margin-top:8px;
+  font-family:var(--font-body);
+}
+
+/* TOAST */
+#toast{
+  position:fixed;bottom:24px;right:24px;z-index:999;
+  background:var(--text);color:#fff;padding:12px 18px;border-radius:12px;
+  font-size:13px;box-shadow:var(--shadow-lg);display:none;
+  animation:slideUp .2s ease;max-width:280px;
+}
+#toast.green{background:var(--green)}
+#toast.red{background:var(--red)}
+#toast.orange{background:var(--orange)}
+
+/* ANIMATIONS */
+@keyframes fadeIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes moveCar{
+  0%{transform:translate(0,0)}
+  33%{transform:translate(20px,-10px)}
+  66%{transform:translate(-10px,15px)}
+  100%{transform:translate(15px,5px)}
+}
+@keyframes shk{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+
+/* RESPONSIVE */
+@media(max-width:899px){
+  #sidebar{
+    position:fixed;top:0;left:0;bottom:0;z-index:50;
+    transform:translateX(-100%);
+  }
+  #sidebar.open{transform:translateX(0)}
+  #overlay.show{display:block}
+  .k4{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:1fr}
+}
+@media(max-width:480px){
+  .k4,.k3,.k2,.g2{grid-template-columns:1fr}
+  .content{padding:14px}
+  .topbar-clock{display:none}
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">🍊</div>
+    <div class="login-title">NeoPisk Admin</div>
+    <div class="login-sub">Panel de administración · v2.0</div>
+    <label class="login-label">Usuario</label>
+    <input class="login-input" id="l-user" value="admin" readonly>
+    <label class="login-label">Contraseña</label>
+    <input class="login-input" id="l-pass" type="password" placeholder="••••••" onkeydown="if(event.key==='Enter')doLogin()">
+    <div class="login-err" id="l-err">Contraseña incorrecta</div>
+    <button class="login-btn" onclick="doLogin()">Ingresar →</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <button class="topbar-menu" onclick="openSb()">☰</button>
+    <span class="topbar-title">🍊 NeoPisk Admin</span>
+    <span class="topbar-status">Sistema OK</span>
+    <span class="topbar-clock" id="clock">--:--:--</span>
+  </div>
+
+  <div class="main-wrap">
+    <!-- SIDEBAR -->
+    <div id="sidebar">
+      <div class="sb-head">
+        <div class="sb-logo">
+          <span class="sb-logo-icon">🍊</span>
+          <span class="sb-logo-text">NeoPisk</span>
+          <span class="sb-logo-ver">v2.0</span>
+        </div>
+      </div>
+      <div class="sb-nav" id="sb-nav"></div>
+      <div class="sb-foot">
+        <div class="sb-user">
+          <div class="sb-avatar">A</div>
+          <div>
+            <div class="sb-uname">Admin Root</div>
+            <div class="sb-urole">Superadmin</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OVERLAY -->
+    <div id="overlay" onclick="closeSb()"></div>
+
+    <!-- CONTENT -->
+    <div class="content">
+      <div class="view active" id="v-dashboard"></div>
+      <div class="view" id="v-mapa"></div>
+      <div class="view" id="v-conductores"></div>
+      <div class="view" id="v-bunker"></div>
+      <div class="view" id="v-liquidacion"></div>
+      <div class="view" id="v-schema"></div>
+      <div class="view" id="v-algoritmo"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+// ── DATA ─────────────────────────────────────────────────────────────
+const NAVS = [
+  {id:'dashboard',icon:'📊',label:'Dashboard'},
+  {id:'mapa',icon:'🗺️',label:'Mapa en Vivo'},
+  {id:'conductores',icon:'🚗',label:'Conductores'},
+  {id:'bunker',icon:'📦',label:'Búnker · Pedidos'},
+  {id:'liquidacion',icon:'💰',label:'Liquidación'},
+  {id:'schema',icon:'🗄️',label:'Base de Datos'},
+  {id:'algoritmo',icon:'⚙️',label:'Algoritmo'},
+];
+
+const CONDUCTORES = [
+  {id:'C01',nombre:'Carlos Huanca',placa:'ABC-123',estado:'En ruta',vel:48,dist:12.4,docs:'OK',lat:-12.04,lng:-77.02},
+  {id:'C02',nombre:'Pedro Quispe', placa:'DEF-456',estado:'Disponible',vel:0,dist:0,docs:'OK',lat:-12.07,lng:-77.05},
+  {id:'C03',nombre:'Luis Mamani',  placa:'GHI-789',estado:'En ruta',vel:67,dist:8.1,docs:'Vencidos',lat:-12.10,lng:-77.01},
+  {id:'C04',nombre:'Ana Flores',   placa:'JKL-012',estado:'Entregando',vel:12,dist:3.2,docs:'OK',lat:-12.06,lng:-77.04},
+];
+
+const PEDIDOS = [
+  {id:'P001',origen:'San Borja',destino:'Surco',estado:'Listo',monto:50,hora:'08:12'},
+  {id:'P002',origen:'Surco',destino:'San Borja',estado:'Listo',monto:50,hora:'08:45'},
+  {id:'P003',origen:'San Borja',destino:'Miraflores',estado:'Listo',monto:50,hora:'09:01'},
+  {id:'P004',origen:'Miraflores',destino:'San Borja',estado:'Listo',monto:50,hora:'09:20'},
+  {id:'P005',origen:'San Borja',destino:'Surco',estado:'Listo',monto:50,hora:'09:38'},
+  {id:'P006',origen:'Surco',destino:'San Isidro',estado:'En ruta',monto:50,hora:'09:55'},
+  {id:'P007',origen:'San Borja',destino:'Barranco',estado:'Entregado',monto:50,hora:'10:10'},
+];
+
+const SCHEMA = [
+  {name:'Usuarios',icon:'👤',badge:'PK:uid',fields:[
+    ['uid','STRING','ID único Firebase'],
+    ['nombre','STRING','Nombre completo'],
+    ['telefono','STRING','WhatsApp/Telegram'],
+    ['rol','ENUM','admin | conductor | cliente'],
+    ['activo','BOOL','Estado de cuenta'],
+  ]},
+  {name:'Vehiculos',icon:'🚗',badge:'FK:uid',fields:[
+    ['vid','STRING','ID vehículo'],
+    ['conductor_uid','STRING','FK → Usuarios'],
+    ['placa','STRING','Placa peruana'],
+    ['modelo','STRING','Changan / BYD / BAJAJ'],
+    ['tipo','ENUM','electrico | hibrido'],
+  ]},
+  {name:'Rutas',icon:'📍',badge:'FK:vid',fields:[
+    ['rid','STRING','ID ruta'],
+    ['vehiculo_vid','STRING','FK → Vehiculos'],
+    ['inicio_ts','TIMESTAMP','Inicio del viaje'],
+    ['fin_ts','TIMESTAMP','Fin del viaje'],
+    ['distancia_km','FLOAT','Kilómetros recorridos'],
+  ]},
+  {name:'Transacciones',icon:'💳',badge:'FK:uid',fields:[
+    ['tid','STRING','ID transacción'],
+    ['usuario_uid','STRING','FK → Usuarios'],
+    ['monto','FLOAT','S/ en soles'],
+    ['tipo','ENUM','viaje | recarga | comision'],
+    ['estado','ENUM','pendiente | ok | error'],
+  ]},
+];
+
+const ALGO = [
+  {n:1,title:'Acumulación',desc:'Se recolectan pedidos activos del pool de solicitudes en tiempo real desde Firebase RTDB.',code:'pool = db.ref("/pedidos").where("estado","==","listo")'},
+  {n:2,title:'Filtro de zona',desc:'Se descartan pedidos fuera del radio operativo de cada conductor activo (≤ 5 km).',code:'distancia(conductor.lat, pedido.lat) <= 5'},
+  {n:3,title:'Score de prioridad',desc:'Cada pedido recibe un score basado en distancia, tiempo de espera y rating del conductor.',code:'score = (1/dist)*0.5 + espera*0.3 + rating*0.2'},
+  {n:4,title:'Match óptimo',desc:'El sistema asigna el pedido al conductor con mayor score disponible usando asignación greedy.',code:'match = max(conductores, key=lambda c: c.score)'},
+  {n:5,title:'Anti-fraude',desc:'Validación de ruta mínima: si la distancia real < 60% de la estimada, se marca para revisión.',code:'if real_dist < estimada*0.6: flag("revision")'},
+];
+
+// ── UTILS ─────────────────────────────────────────────────────────────
+function toast(msg,type=''){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.className=type;t.style.display='block';
+  setTimeout(()=>t.style.display='none',2800);
+}
+function sv(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('v-'+id).classList.add('active');
+  document.querySelectorAll('.sb-item').forEach(i=>i.classList.toggle('active',i.dataset.view===id));
+  closeSb();
+}
+function openSb(){document.getElementById('sidebar').classList.add('open');document.getElementById('overlay').classList.add('show')}
+function closeSb(){document.getElementById('sidebar').classList.remove('open');document.getElementById('overlay').classList.remove('show')}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────
+function doLogin(){
+  const pass=document.getElementById('l-pass').value;
+  const err=document.getElementById('l-err');
+  if(pass==='123'){
+    document.getElementById('login-screen').style.display='none';
+    document.getElementById('app').classList.add('visible');
+    buildNav();renderAll();startClock();
+    toast('Bienvenido, Admin 🍊','orange');
+  } else {
+    err.style.display='block';
+    document.getElementById('login-screen').querySelector('.login-card').style.animation='shk .3s ease';
+    setTimeout(()=>document.getElementById('login-screen').querySelector('.login-card').style.animation='',400);
+  }
+}
+
+// ── NAV ──────────────────────────────────────────────────────────────
+function buildNav(){
+  const nav=document.getElementById('sb-nav');
+  nav.innerHTML=NAVS.map(n=>`
+    <div class="sb-item${n.id==='dashboard'?' active':''}" data-view="${n.id}" onclick="sv('${n.id}')">
+      <span class="icon">${n.icon}</span><span>${n.label}</span>
+    </div>`).join('');
+}
+
+// ── CLOCK ─────────────────────────────────────────────────────────────
+function startClock(){
+  setInterval(()=>{
+    const now=new Date();
+    document.getElementById('clock').textContent=now.toLocaleTimeString('es-PE');
+  },1000);
+}
+
+// ── VIEWS ─────────────────────────────────────────────────────────────
+function renderAll(){vDash();vMapa();vConds();vBunker();vLiq();vSchema();vAlgo()}
+
+function vDash(){
+  document.getElementById('v-dashboard').innerHTML=`
+  <div class="section-title">Dashboard General</div>
+  <div class="section-sub">Vista operativa en tiempo real · Neo Pisk</div>
+  <div class="k4">
+    <div class="kpi-card orange"><div class="kpi-icon">🚗</div><div class="kpi-label">Conductores activos</div><div class="kpi-value">3</div><div class="kpi-sub">de 4 registrados</div></div>
+    <div class="kpi-card green"><div class="kpi-icon">📦</div><div class="kpi-label">Pedidos hoy</div><div class="kpi-value">7</div><div class="kpi-sub">5 en cola · 1 en ruta</div></div>
+    <div class="kpi-card blue"><div class="kpi-icon">💰</div><div class="kpi-label">Facturación hoy</div><div class="kpi-value">S/450</div><div class="kpi-sub">meta S/600</div></div>
+    <div class="kpi-card red"><div class="kpi-icon">⚠️</div><div class="kpi-label">Alertas activas</div><div class="kpi-value">2</div><div class="kpi-sub">requieren atención</div></div>
+  </div>
+  <div class="g3">
+    <div class="card">
+      <div class="card-title">Alertas del sistema</div>
+      <div class="alert-box red"><div class="alert-head">⚠️ Documentos vencidos</div><div class="alert-body">Luis Mamani (GHI-789) tiene SOAT vencido. No debería operar.</div></div>
+      <div class="alert-box yellow"><div class="alert-head">⏱ Pedido P005 sin asignar</div><div class="alert-body">Lleva 18 min en cola. Revisar disponibilidad de conductores.</div></div>
+      <div class="alert-box green"><div class="alert-head">✅ Sistema OK</div><div class="alert-body">Firebase RTDB operativo · Latencia: 42ms · Uptime: 99.8%</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Estado conductores</div>
+      ${CONDUCTORES.map(c=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text)">${c.nombre}</div>
+          <div style="font-size:11px;color:var(--text3)">${c.placa} · ${c.vel}km/h</div>
+        </div>
+        <span class="chip ${c.estado==='En ruta'?'orange':c.estado==='Disponible'?'green':c.estado==='Entregando'?'blue':'red'}">${c.estado}</span>
+      </div>`).join('')}
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">Mapa en vivo (preview)</div>
+    <div class="map-box">
+      <div class="map-grid"></div>
+      <div class="map-car" style="top:35%;left:25%">🚗</div>
+      <div class="map-car" style="top:55%;left:60%;animation-delay:.8s">🚙</div>
+      <div class="map-car" style="top:20%;left:70%;animation-delay:1.5s">🔴</div>
+      <div class="map-pin" style="top:45%;left:45%">🏭</div>
+      <div class="map-label" style="top:30%;left:5%">San Borja</div>
+      <div class="map-label" style="bottom:15%;right:5%">Surco</div>
+    </div>
+  </div>`;
+}
+
+function vMapa(){
+  document.getElementById('v-mapa').innerHTML=`
+  <div class="section-title">Mapa en Vivo</div>
+  <div class="section-sub">GPS en tiempo real · telemetría · anti-fraude</div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="map-box" style="height:300px">
+      <div class="map-grid"></div>
+      <div class="map-car" style="top:30%;left:20%">🚗<div class="map-label" style="top:-20px;left:0;white-space:nowrap">Carlos 48km/h</div></div>
+      <div class="map-car" style="top:60%;left:65%;animation-delay:.6s">🚙<div class="map-label" style="top:-20px;left:0;white-space:nowrap">Luis 67km/h</div></div>
+      <div class="map-car" style="top:75%;left:40%;animation-delay:1.2s;font-size:14px">🔵<div class="map-label" style="top:-20px;left:0;white-space:nowrap">Ana 12km/h</div></div>
+      <div class="map-pin" style="top:42%;left:47%">🏭</div>
+      <div class="map-label" style="top:10%;left:5%">Pedro: En base</div>
+    </div>
+  </div>
+  <div class="k3">
+    <div class="card">
+      <div class="card-title">Telemetría promedio</div>
+      <div class="progress-wrap"><div class="progress-label"><span>Velocidad</span><span>42 km/h</span></div><div class="progress-bar"><div class="progress-fill orange" style="width:42%"></div></div></div>
+      <div class="progress-wrap"><div class="progress-label"><span>Combustible/batería</span><span>68%</span></div><div class="progress-bar"><div class="progress-fill green" style="width:68%"></div></div></div>
+      <div class="progress-wrap"><div class="progress-label"><span>Eficiencia de ruta</span><span>81%</span></div><div class="progress-bar"><div class="progress-fill blue" style="width:81%"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Anti-fraude</div>
+      <div class="alert-box green"><div class="alert-head">✅ Sin anomalías</div><div class="alert-body">Todas las rutas activas dentro del rango esperado.</div></div>
+      <div style="font-size:11px;color:var(--text3)">Umbral: ruta real ≥ 60% de estimada<br>Última revisión: hace 3 min</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Zonas operativas</div>
+      ${['San Borja','Surco','Miraflores','San Isidro','Barranco'].map((z,i)=>
+        `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <span style="color:var(--text2)">${z}</span>
+          <span class="chip ${i<2?'green':i<4?'orange':'blue'}">${i<2?'Activa':i<4?'Media':'Baja'}</span>
+        </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function vConds(){
+  document.getElementById('v-conductores').innerHTML=`
+  <div class="section-title">Conductores</div>
+  <div class="section-sub">Gestión de flota · ${CONDUCTORES.length} unidades registradas</div>
+  <div class="k4" style="margin-bottom:20px">
+    <div class="kpi-card green"><div class="kpi-icon">✅</div><div class="kpi-label">Disponibles</div><div class="kpi-value">1</div></div>
+    <div class="kpi-card orange"><div class="kpi-icon">🚗</div><div class="kpi-label">En ruta</div><div class="kpi-value">2</div></div>
+    <div class="kpi-card blue"><div class="kpi-icon">📦</div><div class="kpi-label">Entregando</div><div class="kpi-value">1</div></div>
+    <div class="kpi-card red"><div class="kpi-icon">⚠️</div><div class="kpi-label">Docs vencidos</div><div class="kpi-value">1</div></div>
+  </div>
+  <div class="card">
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>ID</th><th>Conductor</th><th>Placa</th><th>Estado</th><th>Velocidad</th><th>Km hoy</th><th>Documentos</th><th>Acción</th></tr></thead>
+      <tbody>
+        ${CONDUCTORES.map(c=>`
+        <tr>
+          <td style="color:var(--text3)">${c.id}</td>
+          <td style="font-weight:600;color:var(--text)">${c.nombre}</td>
+          <td><span class="chip blue">${c.placa}</span></td>
+          <td><span class="chip ${c.estado==='En ruta'?'orange':c.estado==='Disponible'?'green':c.estado==='Entregando'?'blue':'red'}">${c.estado}</span></td>
+          <td>${c.vel} km/h</td>
+          <td>${c.dist} km</td>
+          <td><span class="chip ${c.docs==='OK'?'green':'red'}">${c.docs}</span></td>
+          <td><button onclick="toast('Abriendo perfil de ${c.nombre}','orange')" style="border:none;background:var(--orange-bg);color:var(--orange);padding:5px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-family:var(--font-body);font-weight:600">Ver →</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>
+  </div>`;
+}
+
+function vBunker(){
+  document.getElementById('v-bunker').innerHTML=`
+  <div class="section-title">Búnker · Pedidos</div>
+  <div class="section-sub">Pool de pedidos activos · lógica 10×50 (S/50 por viaje)</div>
+  <div class="k3" style="margin-bottom:20px">
+    <div class="kpi-card orange"><div class="kpi-icon">📋</div><div class="kpi-label">En cola</div><div class="kpi-value">5</div><div class="kpi-sub">listos para asignar</div></div>
+    <div class="kpi-card blue"><div class="kpi-icon">🚚</div><div class="kpi-label">En ruta</div><div class="kpi-value">1</div></div>
+    <div class="kpi-card green"><div class="kpi-icon">✅</div><div class="kpi-label">Entregados hoy</div><div class="kpi-value">1</div><div class="kpi-sub">S/50 cobrado</div></div>
+  </div>
+  <div class="card">
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>ID</th><th>Origen</th><th>Destino</th><th>Hora</th><th>Monto</th><th>Estado</th></tr></thead>
+      <tbody>
+        ${PEDIDOS.map(p=>`
+        <tr>
+          <td style="color:var(--orange);font-weight:600">${p.id}</td>
+          <td>${p.origen}</td>
+          <td>${p.destino}</td>
+          <td style="color:var(--text3)">${p.hora}</td>
+          <td style="color:var(--green);font-weight:600">S/${p.monto}</td>
+          <td><span class="chip ${p.estado==='Entregado'?'green':p.estado==='En ruta'?'orange':'blue'}">${p.estado}</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>
+  </div>`;
+}
+
+function vLiq(){
+  const dias=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  const vals=[145,180,210,195,240,170,110];
+  const maxV=Math.max(...vals);
+  document.getElementById('v-liquidacion').innerHTML=`
+  <div class="section-title">Liquidación</div>
+  <div class="section-sub">Ingresos y comisiones · semana actual</div>
+  <div class="k4" style="margin-bottom:20px">
+    <div class="kpi-card orange"><div class="kpi-icon">💰</div><div class="kpi-label">Hoy</div><div class="kpi-value">S/450</div><div class="kpi-sub">9 viajes × S/50</div></div>
+    <div class="kpi-card green"><div class="kpi-icon">📈</div><div class="kpi-label">Semana</div><div class="kpi-value">S/1,250</div><div class="kpi-sub">meta S/1,800</div></div>
+    <div class="kpi-card blue"><div class="kpi-icon">🏭</div><div class="kpi-label">Comisión Neo</div><div class="kpi-value">S/125</div><div class="kpi-sub">10% semana</div></div>
+    <div class="kpi-card red"><div class="kpi-icon">📊</div><div class="kpi-label">Pendiente</div><div class="kpi-value">S/325</div><div class="kpi-sub">por liquidar</div></div>
+  </div>
+  <div class="g2">
+    <div class="card">
+      <div class="card-title">Ingresos por día (S/)</div>
+      <div class="bar-chart">
+        ${vals.map((v,i)=>`
+        <div class="bar-wrap">
+          <div class="bar" style="height:${(v/maxV*80)+10}px" title="S/${v}">
+            <span class="bar-val">${v}</span>
+          </div>
+          <span class="bar-day">${dias[i]}</span>
+        </div>`).join('')}
+      </div>
+      <div style="text-align:right;font-size:11px;color:var(--text3);margin-top:4px">Total semana: S/1,250</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Distribución de ingresos</div>
+      ${[
+        {label:'Conductores (90%)',val:90,color:'green'},
+        {label:'Neo Pisk (10%)',val:10,color:'orange'},
+      ].map(r=>`
+      <div class="progress-wrap">
+        <div class="progress-label"><span>${r.label}</span><span>${r.val}%</span></div>
+        <div class="progress-bar"><div class="progress-fill ${r.color}" style="width:${r.val}%"></div></div>
+      </div>`).join('')}
+      <div style="margin-top:16px;font-size:12px;color:var(--text3)">
+        <div style="margin-bottom:6px">Liquidación automática: <span style="color:var(--green);font-weight:600">Viernes 18:00</span></div>
+        <div>Próxima liquidación: <span style="color:var(--orange);font-weight:600">Vie 07/03 18:00</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function vSchema(){
+  document.getElementById('v-schema').innerHTML=`
+  <div class="section-title">Base de Datos</div>
+  <div class="section-sub">Esquema Firebase Realtime Database · Neo Pisk v2.0</div>
+  <div class="k2">
+    ${SCHEMA.map(s=>`
+    <div class="schema-section">
+      <div class="schema-head">${s.icon} ${s.name} <span class="badge">${s.badge}</span></div>
+      <table class="schema-table">
+        ${s.fields.map(([n,t,d])=>`<tr><td>${n}</td><td>${t}</td><td>${d}</td></tr>`).join('')}
+      </table>
+    </div>`).join('')}
+  </div>
+  <div class="card">
+    <div class="card-title">Reglas de seguridad (Firebase)</div>
+    <div class="algo-code" style="white-space:pre;line-height:1.7">{
+  "rules": {
+    "pedidos":  { ".read": "auth != null", ".write": "auth.token.role === 'conductor'" },
+    "usuarios": { "$uid": { ".read": "$uid === auth.uid || auth.token.admin === true" }},
+    "rutas":    { ".read": "auth.token.admin === true", ".write": "auth != null" }
+  }
+}</div>
+  </div>`;
+}
+
+function vAlgo(){
+  document.getElementById('v-algoritmo').innerHTML=`
+  <div class="section-title">Algoritmo de Asignación</div>
+  <div class="section-sub">Motor de matching conductor ↔ pedido · 5 pasos</div>
+  <div class="algo-steps">
+    ${ALGO.map(a=>`
+    <div class="algo-step">
+      <div class="algo-num">${a.n}</div>
+      <div class="algo-body">
+        <div class="algo-title">${a.title}</div>
+        <div class="algo-desc">${a.desc}</div>
+        <div class="algo-code">${a.code}</div>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ── PWA ───────────────────────────────────────────────────────────────
+(function(){
+  // Dynamic manifest
+  const c=document.createElement('canvas');c.width=c.height=192;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#e85d00';ctx.beginPath();ctx.roundRect(0,0,192,192,36);ctx.fill();
+  ctx.font='bold 110px serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('🍊',96,96);
+  const ico=c.toDataURL('image/png');
+  const manifest={name:'NeoPisk Admin',short_name:'Admin',start_url:'/admin',display:'standalone',background_color:'#f7f5f0',theme_color:'#e85d00',icons:[{src:ico,sizes:'192x192',type:'image/png'}]};
+  const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
+  const link=document.createElement('link');link.rel='manifest';link.href=URL.createObjectURL(blob);
+  document.head.appendChild(link);
+})();
+
+// Install prompt
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  setTimeout(()=>{
+    if(confirm('¿Instalar NeoPisk Admin como app?'))e.prompt();
+  },3000);
+});
+
+// Service Worker
+if('serviceWorker' in navigator){
+  const sw=`self.addEventListener('install',e=>e.waitUntil(caches.open('neopisk-admin-v2').then(c=>c.addAll(['/']))));
+self.addEventListener('fetch',e=>e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request))));`;
+  const blob=new Blob([sw],{type:'text/javascript'});
+  navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+}
+</script>
+</body>
+</html>
