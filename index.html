@@ -341,7 +341,62 @@ tbody tr:last-child td{border-bottom:none}
 <!-- TOAST -->
 <div id="toast"></div>
 
-<script>
+<script type="module">
+// ── FIREBASE ──────────────────────────────────────────────────────────
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, onValue, update, serverTimestamp }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBhnAKQfADIdNX4brbG-YdTEr-DKFta7jE",
+  authDomain: "neopisk.firebaseapp.com",
+  databaseURL: "https://neopisk-default-rtdb.firebaseio.com",
+  projectId: "neopisk",
+  storageBucket: "neopisk.firebasestorage.app",
+  messagingSenderId: "873475816427",
+  appId: "1:873475816427:web:fa8ca59cb85a2c1d00f7ae"
+};
+const fbApp = initializeApp(firebaseConfig);
+const db = getDatabase(fbApp);
+
+// Estado en tiempo real
+let CONDUCTORES_RT = [];
+let PEDIDOS_RT = [];
+
+function listenFirebase() {
+  // Escuchar conductores
+  onValue(ref(db, 'conductores'), snap => {
+    const data = snap.val() || {};
+    CONDUCTORES_RT = Object.entries(data).map(([id, v]) => ({
+      id, nombre: v.nombre||id, placa: v.placa||'—',
+      estado: v.estado||'desconectado', vel: v.velocidad||0,
+      dist: v.km_hoy||0, docs: v.docs||'OK',
+      lat: v.lat||-12.05, lng: v.lng||-77.03, online: v.online||false
+    }));
+    vDash(); vMapa(); vConds();
+    // KPI badge en sidebar
+    const activos = CONDUCTORES_RT.filter(c => c.online).length;
+    document.getElementById('kpi-conductores')?.setAttribute('data-val', activos);
+  });
+
+  // Escuchar pedidos
+  onValue(ref(db, 'pedidos'), snap => {
+    const data = snap.val() || {};
+    PEDIDOS_RT = Object.entries(data).map(([id, v]) => ({
+      id, origen: v.origen||'—', destino: v.destino||'—',
+      estado: v.estado||'pendiente', monto: v.monto||50,
+      hora: v.ts_creado ? new Date(v.ts_creado).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}) : '—'
+    }));
+    vDash(); vBunker();
+  });
+}
+
+// Acción admin: cambiar estado conductor
+window.setConductorEstado = function(cid, estado) {
+  update(ref(db, `conductores/${cid}`), { estado });
+  toast(`Conductor ${cid} → ${estado}`, 'orange');
+};
+
 // ── DATA ─────────────────────────────────────────────────────────────
 const NAVS = [
   {id:'dashboard',icon:'📊',label:'Dashboard'},
@@ -431,7 +486,7 @@ function doLogin(){
   if(pass==='123'){
     document.getElementById('login-screen').style.display='none';
     document.getElementById('app').classList.add('visible');
-    buildNav();renderAll();startClock();
+    buildNav();renderAll();startClock();listenFirebase();
     toast('Bienvenido, Admin 🍊','orange');
   } else {
     err.style.display='block';
@@ -461,31 +516,38 @@ function startClock(){
 function renderAll(){vDash();vMapa();vConds();vBunker();vLiq();vSchema();vAlgo()}
 
 function vDash(){
+  const conds = CONDUCTORES_RT.length ? CONDUCTORES_RT : CONDUCTORES;
+  const peds  = PEDIDOS_RT.length ? PEDIDOS_RT : PEDIDOS;
+  const activos = conds.filter(c=>c.online||c.estado==='En ruta'||c.estado==='en_ruta').length;
+  const pedHoy  = peds.length;
+  const enCola  = peds.filter(p=>p.estado==='pendiente'||p.estado==='Listo').length;
+  const enRuta  = peds.filter(p=>p.estado==='en_ruta'||p.estado==='En ruta').length;
+  const factura = peds.filter(p=>p.estado==='entregado'||p.estado==='Entregado').reduce((a,p)=>a+(p.monto||50),0);
   document.getElementById('v-dashboard').innerHTML=`
   <div class="section-title">Dashboard General</div>
   <div class="section-sub">Vista operativa en tiempo real · Neo Pisk</div>
   <div class="k4">
-    <div class="kpi-card orange"><div class="kpi-icon">🚗</div><div class="kpi-label">Conductores activos</div><div class="kpi-value">3</div><div class="kpi-sub">de 4 registrados</div></div>
-    <div class="kpi-card green"><div class="kpi-icon">📦</div><div class="kpi-label">Pedidos hoy</div><div class="kpi-value">7</div><div class="kpi-sub">5 en cola · 1 en ruta</div></div>
-    <div class="kpi-card blue"><div class="kpi-icon">💰</div><div class="kpi-label">Facturación hoy</div><div class="kpi-value">S/450</div><div class="kpi-sub">meta S/600</div></div>
-    <div class="kpi-card red"><div class="kpi-icon">⚠️</div><div class="kpi-label">Alertas activas</div><div class="kpi-value">2</div><div class="kpi-sub">requieren atención</div></div>
+    <div class="kpi-card orange"><div class="kpi-icon">🚗</div><div class="kpi-label">Conductores activos</div><div class="kpi-value">${activos}</div><div class="kpi-sub">de ${conds.length} registrados</div></div>
+    <div class="kpi-card green"><div class="kpi-icon">📦</div><div class="kpi-label">Pedidos hoy</div><div class="kpi-value">${pedHoy}</div><div class="kpi-sub">${enCola} en cola · ${enRuta} en ruta</div></div>
+    <div class="kpi-card blue"><div class="kpi-icon">💰</div><div class="kpi-label">Facturación hoy</div><div class="kpi-value">S/${factura||0}</div><div class="kpi-sub">meta S/600</div></div>
+    <div class="kpi-card red"><div class="kpi-icon">⚠️</div><div class="kpi-label">Alertas activas</div><div class="kpi-value">${conds.filter(c=>c.docs==='Vencidos').length}</div><div class="kpi-sub">requieren atención</div></div>
   </div>
   <div class="g3">
     <div class="card">
       <div class="card-title">Alertas del sistema</div>
-      <div class="alert-box red"><div class="alert-head">⚠️ Documentos vencidos</div><div class="alert-body">Luis Mamani (GHI-789) tiene SOAT vencido. No debería operar.</div></div>
-      <div class="alert-box yellow"><div class="alert-head">⏱ Pedido P005 sin asignar</div><div class="alert-body">Lleva 18 min en cola. Revisar disponibilidad de conductores.</div></div>
-      <div class="alert-box green"><div class="alert-head">✅ Sistema OK</div><div class="alert-body">Firebase RTDB operativo · Latencia: 42ms · Uptime: 99.8%</div></div>
+      ${conds.filter(c=>c.docs==='Vencidos').map(c=>`<div class="alert-box red"><div class="alert-head">⚠️ Documentos vencidos</div><div class="alert-body">${c.nombre} (${c.placa}) tiene documentos vencidos.</div></div>`).join('')||''}
+      ${enCola>3?`<div class="alert-box yellow"><div class="alert-head">⏱ ${enCola} pedidos en cola</div><div class="alert-body">Revisar disponibilidad de conductores.</div></div>`:''}
+      <div class="alert-box green"><div class="alert-head">✅ Firebase conectado</div><div class="alert-body">RTDB operativo · Datos en tiempo real activos</div></div>
     </div>
     <div class="card">
       <div class="card-title">Estado conductores</div>
-      ${CONDUCTORES.map(c=>`
+      ${conds.map(c=>`
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
         <div>
           <div style="font-size:12px;font-weight:600;color:var(--text)">${c.nombre}</div>
           <div style="font-size:11px;color:var(--text3)">${c.placa} · ${c.vel}km/h</div>
         </div>
-        <span class="chip ${c.estado==='En ruta'?'orange':c.estado==='Disponible'?'green':c.estado==='Entregando'?'blue':'red'}">${c.estado}</span>
+        <span class="chip ${c.estado==='En ruta'||c.estado==='en_ruta'?'orange':c.estado==='Disponible'||c.estado==='disponible'?'green':c.estado==='Entregando'||c.estado==='entregando'?'blue':'red'}">${c.estado}</span>
       </div>`).join('')}
     </div>
   </div>
@@ -493,9 +555,7 @@ function vDash(){
     <div class="card-title">Mapa en vivo (preview)</div>
     <div class="map-box">
       <div class="map-grid"></div>
-      <div class="map-car" style="top:35%;left:25%">🚗</div>
-      <div class="map-car" style="top:55%;left:60%;animation-delay:.8s">🚙</div>
-      <div class="map-car" style="top:20%;left:70%;animation-delay:1.5s">🔴</div>
+      ${conds.slice(0,3).map((c,i)=>`<div class="map-car" style="top:${20+i*18}%;left:${15+i*25}%;animation-delay:${i*.6}s">🚗</div>`).join('')}
       <div class="map-pin" style="top:45%;left:45%">🏭</div>
       <div class="map-label" style="top:30%;left:5%">San Borja</div>
       <div class="map-label" style="bottom:15%;right:5%">Surco</div>
@@ -541,30 +601,35 @@ function vMapa(){
 }
 
 function vConds(){
+  const conds = CONDUCTORES_RT.length ? CONDUCTORES_RT : CONDUCTORES;
+  const disp = conds.filter(c=>c.estado==='Disponible'||c.estado==='disponible').length;
+  const enR  = conds.filter(c=>c.estado==='En ruta'||c.estado==='en_ruta').length;
+  const entr = conds.filter(c=>c.estado==='Entregando'||c.estado==='entregando').length;
+  const docs = conds.filter(c=>c.docs==='Vencidos').length;
   document.getElementById('v-conductores').innerHTML=`
   <div class="section-title">Conductores</div>
-  <div class="section-sub">Gestión de flota · ${CONDUCTORES.length} unidades registradas</div>
+  <div class="section-sub">Gestión de flota · ${conds.length} unidades registradas</div>
   <div class="k4" style="margin-bottom:20px">
-    <div class="kpi-card green"><div class="kpi-icon">✅</div><div class="kpi-label">Disponibles</div><div class="kpi-value">1</div></div>
-    <div class="kpi-card orange"><div class="kpi-icon">🚗</div><div class="kpi-label">En ruta</div><div class="kpi-value">2</div></div>
-    <div class="kpi-card blue"><div class="kpi-icon">📦</div><div class="kpi-label">Entregando</div><div class="kpi-value">1</div></div>
-    <div class="kpi-card red"><div class="kpi-icon">⚠️</div><div class="kpi-label">Docs vencidos</div><div class="kpi-value">1</div></div>
+    <div class="kpi-card green"><div class="kpi-icon">✅</div><div class="kpi-label">Disponibles</div><div class="kpi-value">${disp}</div></div>
+    <div class="kpi-card orange"><div class="kpi-icon">🚗</div><div class="kpi-label">En ruta</div><div class="kpi-value">${enR}</div></div>
+    <div class="kpi-card blue"><div class="kpi-icon">📦</div><div class="kpi-label">Entregando</div><div class="kpi-value">${entr}</div></div>
+    <div class="kpi-card red"><div class="kpi-icon">⚠️</div><div class="kpi-label">Docs vencidos</div><div class="kpi-value">${docs}</div></div>
   </div>
   <div class="card">
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>ID</th><th>Conductor</th><th>Placa</th><th>Estado</th><th>Velocidad</th><th>Km hoy</th><th>Documentos</th><th>Acción</th></tr></thead>
+      <thead><tr><th>ID</th><th>Conductor</th><th>Placa</th><th>Estado</th><th>Velocidad</th><th>Km hoy</th><th>Docs</th><th>Acción</th></tr></thead>
       <tbody>
-        ${CONDUCTORES.map(c=>`
+        ${conds.map(c=>`
         <tr>
           <td style="color:var(--text3)">${c.id}</td>
           <td style="font-weight:600;color:var(--text)">${c.nombre}</td>
           <td><span class="chip blue">${c.placa}</span></td>
-          <td><span class="chip ${c.estado==='En ruta'?'orange':c.estado==='Disponible'?'green':c.estado==='Entregando'?'blue':'red'}">${c.estado}</span></td>
+          <td><span class="chip ${c.estado==='En ruta'||c.estado==='en_ruta'?'orange':c.estado==='Disponible'||c.estado==='disponible'?'green':c.estado==='Entregando'||c.estado==='entregando'?'blue':'red'}">${c.estado}</span></td>
           <td>${c.vel} km/h</td>
           <td>${c.dist} km</td>
           <td><span class="chip ${c.docs==='OK'?'green':'red'}">${c.docs}</span></td>
-          <td><button onclick="toast('Abriendo perfil de ${c.nombre}','orange')" style="border:none;background:var(--orange-bg);color:var(--orange);padding:5px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-family:var(--font-body);font-weight:600">Ver →</button></td>
+          <td><button onclick="window.setConductorEstado('${c.id}','disponible')" style="border:none;background:var(--orange-bg);color:var(--orange);padding:5px 10px;border-radius:7px;cursor:pointer;font-size:11px;font-family:var(--font-body);font-weight:600">Liberar</button></td>
         </tr>`).join('')}
       </tbody>
     </table>
@@ -573,28 +638,33 @@ function vConds(){
 }
 
 function vBunker(){
+  const peds = PEDIDOS_RT.length ? PEDIDOS_RT : PEDIDOS;
+  const enCola   = peds.filter(p=>p.estado==='pendiente'||p.estado==='Listo').length;
+  const enRuta   = peds.filter(p=>p.estado==='en_ruta'||p.estado==='En ruta').length;
+  const entregados = peds.filter(p=>p.estado==='entregado'||p.estado==='Entregado').length;
+  const factura  = entregados * 50;
   document.getElementById('v-bunker').innerHTML=`
   <div class="section-title">Búnker · Pedidos</div>
   <div class="section-sub">Pool de pedidos activos · lógica 10×50 (S/50 por viaje)</div>
   <div class="k3" style="margin-bottom:20px">
-    <div class="kpi-card orange"><div class="kpi-icon">📋</div><div class="kpi-label">En cola</div><div class="kpi-value">5</div><div class="kpi-sub">listos para asignar</div></div>
-    <div class="kpi-card blue"><div class="kpi-icon">🚚</div><div class="kpi-label">En ruta</div><div class="kpi-value">1</div></div>
-    <div class="kpi-card green"><div class="kpi-icon">✅</div><div class="kpi-label">Entregados hoy</div><div class="kpi-value">1</div><div class="kpi-sub">S/50 cobrado</div></div>
+    <div class="kpi-card orange"><div class="kpi-icon">📋</div><div class="kpi-label">En cola</div><div class="kpi-value">${enCola}</div><div class="kpi-sub">listos para asignar</div></div>
+    <div class="kpi-card blue"><div class="kpi-icon">🚚</div><div class="kpi-label">En ruta</div><div class="kpi-value">${enRuta}</div></div>
+    <div class="kpi-card green"><div class="kpi-icon">✅</div><div class="kpi-label">Entregados hoy</div><div class="kpi-value">${entregados}</div><div class="kpi-sub">S/${factura} cobrado</div></div>
   </div>
   <div class="card">
     <div style="overflow-x:auto">
     <table>
       <thead><tr><th>ID</th><th>Origen</th><th>Destino</th><th>Hora</th><th>Monto</th><th>Estado</th></tr></thead>
       <tbody>
-        ${PEDIDOS.map(p=>`
+        ${peds.length ? peds.map(p=>`
         <tr>
           <td style="color:var(--orange);font-weight:600">${p.id}</td>
           <td>${p.origen}</td>
           <td>${p.destino}</td>
           <td style="color:var(--text3)">${p.hora}</td>
           <td style="color:var(--green);font-weight:600">S/${p.monto}</td>
-          <td><span class="chip ${p.estado==='Entregado'?'green':p.estado==='En ruta'?'orange':'blue'}">${p.estado}</span></td>
-        </tr>`).join('')}
+          <td><span class="chip ${p.estado==='entregado'||p.estado==='Entregado'?'green':p.estado==='en_ruta'||p.estado==='En ruta'?'orange':'blue'}">${p.estado}</span></td>
+        </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px">Sin pedidos aún</td></tr>'}
       </tbody>
     </table>
     </div>
