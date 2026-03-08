@@ -7,61 +7,33 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
-import { initializeApp }   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getFirestore, collection, collectionGroup, doc,
+  getFirestore, collection, doc,
   onSnapshot, updateDoc, addDoc, query, where,
-  orderBy, serverTimestamp, getDocs, Timestamp
+  orderBy, serverTimestamp, getDocs
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import {
-  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
-  apiKey:        "AIzaSyBhnAKQfADIdNX4brbG-YdTEr-DKFta7jE",
-  authDomain:    "neopisk.firebaseapp.com",
-  projectId:     "neopisk",
-  storageBucket: "neopisk.appspot.com",
+  apiKey:            "AIzaSyBhnAKQfADIdNX4brbG-YdTEr-DKFta7jE",
+  authDomain:        "neopisk.firebaseapp.com",
+  projectId:         "neopisk",
+  storageBucket:     "neopisk.appspot.com",
   messagingSenderId: "873475816427",
-  appId:         "1:873475816427:web:fa8ca59cb85a2c1d00f7ae"
+  appId:             "1:873475816427:web:fa8ca59cb85a2c1d00f7ae"
 };
 
-const app  = initializeApp(firebaseConfig);
-const db   = getFirestore(app);
-const auth = getAuth(app);
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
 
-// ── ESTADO ──────────────────────────────────────────────────────────────────
-let grupos    = {};
-let pendientes = []; // miembros con payment_status="uploaded"
+let grupos   = {};
+let pedidos  = [];
 let activeTab = "pagos";
-let vistaGrupo = null; // groupId activo en detalle
 
-// ── AUTH ─────────────────────────────────────────────────────────────────────
-// Sin login — acceso directo
-document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("login-screen").style.display = "none";
-  document.getElementById("admin-app").style.display    = "flex";
-  initListeners();
-});
+document.addEventListener("DOMContentLoaded", initListeners);
 
-window._login = async () => {
-  const email = document.getElementById("login-email").value.trim();
-  const pass  = document.getElementById("login-pass").value;
-  const btn   = document.getElementById("login-btn");
-  btn.textContent = "Ingresando...";
-  try {
-    await signInWithEmailAndPassword(auth, email, pass);
-  } catch (e) {
-    showToast("❌ Credenciales incorrectas");
-    btn.textContent = "Entrar";
-  }
-};
-
-window._logout = () => signOut(auth);
-
-// ── LISTENERS TIEMPO REAL ────────────────────────────────────────────────────
 function initListeners() {
-  // Grupos
+  // Grupos (productos)
   onSnapshot(
     query(collection(db, "grupay_groups"), orderBy("created_at","desc")),
     snap => {
@@ -69,146 +41,160 @@ function initListeners() {
         if (ch.type === "removed") delete grupos[ch.doc.id];
         else grupos[ch.doc.id] = { id: ch.doc.id, ...ch.doc.data() };
       });
-      renderGrupos();
-      updateStats();
+      renderGrupos(); updateStats();
     }
   );
 
-  // Todos los miembros con pago pendiente de verificar
+  // PEDIDOS — lee grupay_pedidos directamente
   onSnapshot(
-    query(
-      collectionGroup(db, "members"),
-      where("payment_status", "==", "uploaded"),
-      orderBy("joined_at", "asc")
-    ),
+    query(collection(db, "grupay_pedidos"), orderBy("fecha","desc")),
     snap => {
-      pendientes = snap.docs.map(d => ({
-        _docPath: d.ref.path,
-        _groupId: d.ref.path.split("/")[1],
-        _memberId: d.id,
-        ...d.data()
-      }));
-      renderPagos();
-      updateStats();
+      pedidos = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+      renderPagos(); updateStats();
     }
   );
 }
 
-// ── STATS ─────────────────────────────────────────────────────────────────────
 function updateStats() {
+  const pend = pedidos.filter(p => p.payment_status === "uploaded");
   const lista = Object.values(grupos);
-  document.getElementById("stat-pendientes").textContent = pendientes.length;
-  document.getElementById("stat-grupos-abiertos").textContent =
-    lista.filter(g => g.status === "open").length;
-  document.getElementById("stat-grupos-activos").textContent =
-    lista.filter(g => g.status === "active").length;
-  document.getElementById("stat-total-grupos").textContent = lista.length;
-
-  // Badge en tab
-  document.getElementById("tab-badge-pagos").textContent = pendientes.length;
-  document.getElementById("tab-badge-pagos").style.display =
-    pendientes.length > 0 ? "flex" : "none";
+  document.getElementById("stat-pendientes").textContent       = pend.length;
+  document.getElementById("stat-grupos-abiertos").textContent  = lista.filter(g => g.status === "open").length;
+  document.getElementById("stat-grupos-activos").textContent   = lista.filter(g => g.status === "active").length;
+  document.getElementById("stat-total-grupos").textContent     = lista.length;
+  const badge = document.getElementById("tab-badge-pagos");
+  badge.textContent = pend.length;
+  badge.style.display = pend.length > 0 ? "flex" : "none";
 }
 
-// ── TAB PAGOS: lista de pagos a verificar ────────────────────────────────────
+// ── TAB PAGOS ─────────────────────────────────────────────────────────────────
 function renderPagos() {
   if (activeTab !== "pagos") return;
   const container = document.getElementById("tab-content");
+  const pend = pedidos.filter(p => p.payment_status === "uploaded");
 
-  if (pendientes.length === 0) {
-    container.innerHTML = `
-      <div class="empty-card">
-        <div class="empty-icon">✅</div>
-        <div class="empty-title">Todo verificado</div>
-        <div class="empty-sub">No hay pagos pendientes</div>
-      </div>`;
+  if (!pend.length) {
+    container.innerHTML = `<div class="empty-card"><div class="empty-icon">✅</div><div class="empty-title">Todo verificado</div><div class="empty-sub">No hay pagos pendientes</div></div>`;
     return;
   }
 
-  container.innerHTML = pendientes.map(m => {
-    const g = grupos[m._groupId];
-    const hora = m.joined_at?.toDate?.()
-      ? formatHora(m.joined_at.toDate()) : "—";
+  // Agrupar pedidos del mismo carrito (mismo tel + monto + sector + fecha cercana)
+  const agrupados = {};
+  pend.forEach(p => {
+    const key = `${p.tel}_${p.monto}_${p.sector}`;
+    if (!agrupados[key]) agrupados[key] = [];
+    agrupados[key].push(p);
+  });
 
-    return `
-    <div class="pago-card" id="pago-${m._memberId}">
+  container.innerHTML = Object.values(agrupados).map(grupo => {
+    const p      = grupo[0];
+    const monto  = parseFloat(p.monto) || 0;
+    const hora   = p.fecha?.toDate?.() ? formatHora(p.fecha.toDate()) : "—";
+    const ids    = grupo.map(x => x._id).join(",");
+    const esCarrito = grupo.length > 1;
+    const productos = grupo.map(x => `${x.producto_emoji||"📦"} ${x.producto_nombre}`).join("  ·  ");
+
+    return `<div class="pago-card" id="pago-${p._id}">
       <div class="pago-header">
-        <div class="pago-avatar">${g?.emoji || "📦"}</div>
+        <div class="pago-avatar">${esCarrito ? "🛒" : (p.producto_emoji||"📦")}</div>
         <div class="pago-info">
-          <div class="pago-nombre">${m.nombre || m.name || "Cliente"}</div>
-          <div class="pago-grupo">${g?.product_name || m._groupId}</div>
+          <div class="pago-nombre">${p.nombre||"Cliente"}</div>
+          <div class="pago-grupo">${esCarrito ? `Carrito · ${grupo.length} productos` : p.producto_nombre}</div>
+          <div style="font-size:10px;color:var(--muted);margin:3px 0;">${productos}</div>
           <div class="pago-meta">
-            <span class="pago-tel">📱 ${m.tel || m.phone || "—"}</span>
+            <span class="pago-tel">📱 ${p.tel||"—"}</span>
+            <span class="pago-tel">📍 ${p.sector||"—"}</span>
             <span class="pago-hora">🕐 ${hora}</span>
           </div>
         </div>
-        <div class="pago-monto">S/${(m.amount || m.monto || 0).toFixed(0)}</div>
+        <div class="pago-monto">S/${monto.toFixed(1)}</div>
       </div>
 
-      ${m.payment_screenshot_url ? `
-        <div class="screenshot-wrap" onclick="window._verCaptura('${m.payment_screenshot_url}')">
-          <img src="${m.payment_screenshot_url}" class="screenshot-thumb" alt="Captura Yape">
-          <div class="screenshot-overlay">🔍 Ver captura</div>
-        </div>` : `
-        <div class="no-screenshot">📭 Sin captura subida</div>`
-      }
+      ${p.payment_screenshot_url
+        ? `<div class="screenshot-wrap" onclick="window._verCaptura('${p.payment_screenshot_url}')">
+             <img src="${p.payment_screenshot_url}" class="screenshot-thumb" alt="Captura Yape">
+             <div class="screenshot-overlay">🔍 Ver captura</div>
+           </div>`
+        : `<div class="no-screenshot">📭 Sin captura subida</div>`}
 
       <div class="pago-actions">
-        <button class="btn-aprobar" onclick="window._aprobarPago('${m._docPath}','${m._groupId}','${m._memberId}')">
-          ✅ Aprobar
-        </button>
-        <button class="btn-rechazar" onclick="window._rechazarPago('${m._docPath}','${m._memberId}')">
-          ❌ Rechazar
-        </button>
-        <a class="btn-wa-pago" href="https://wa.me/${(m.tel||m.phone||'').replace(/\D/g,'')}?text=${encodeURIComponent(`Hola ${m.nombre||''}! Vi tu pago de S/${m.amount||m.monto} para GruPay. ✅ Aprobado.`)}" target="_blank">
-          💬 WA
-        </a>
+        <button class="btn-aprobar" onclick="window._aprobarPedidos('${ids}','${p.tel||''}','${p.nombre||''}',${monto})">✅ Aprobar</button>
+        <button class="btn-rechazar" onclick="window._rechazarPedidos('${ids}')">❌ Rechazar</button>
+        <a class="btn-wa-pago"
+           href="https://wa.me/51${(p.tel||'').replace(/\D/g,'')}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 🎉 Tu pago de S/${monto.toFixed(1)} en GruPay fue aprobado ✅. Ya estás en el grupo de ${p.sector||'tu sector'}. Pronto recibirás tu pedido 🛒`)}"
+           target="_blank">💬</a>
       </div>
     </div>`;
   }).join("");
 }
+
+window._aprobarPedidos = async (idsStr, tel, nombre, monto) => {
+  const ids = idsStr.split(",");
+  const card = document.getElementById(`pago-${ids[0]}`);
+  if (card) { card.style.opacity="0.4"; card.style.pointerEvents="none"; }
+  try {
+    for (const id of ids) {
+      await updateDoc(doc(db, "grupay_pedidos", id), {
+        payment_status: "verified", verified_at: serverTimestamp()
+      });
+      // También actualizar member en subcollección
+      const pedido = pedidos.find(p => p._id === id);
+      if (pedido?.sector_id && pedido?.producto_id) {
+        try {
+          const mSnap = await getDocs(
+            query(collection(db, "grupay_groups", pedido.producto_id, "sectors", pedido.sector_id, "members"),
+              where("tel","==", pedido.tel))
+          );
+          for (const m of mSnap.docs) {
+            await updateDoc(m.ref, { payment_status:"verified", verified_at:serverTimestamp() });
+          }
+        } catch(e) { console.warn("member update:", e.message); }
+      }
+    }
+    showToast("✅ Pago aprobado — notifica al cliente por WA");
+  } catch(e) {
+    showToast("❌ Error: " + e.message);
+    if (card) { card.style.opacity="1"; card.style.pointerEvents="auto"; }
+  }
+};
+
+window._rechazarPedidos = async (idsStr) => {
+  if (!confirm("¿Rechazar este pago?")) return;
+  for (const id of idsStr.split(",")) {
+    await updateDoc(doc(db, "grupay_pedidos", id), { payment_status: "rejected" });
+  }
+  showToast("🗑 Pago rechazado");
+};
 
 // ── TAB GRUPOS ────────────────────────────────────────────────────────────────
 function renderGrupos() {
   if (activeTab !== "grupos") return;
   const lista = Object.values(grupos);
   const container = document.getElementById("tab-content");
-
-  if (lista.length === 0) {
-    container.innerHTML = `<div class="empty-card">
-      <div class="empty-icon">📦</div>
-      <div class="empty-title">Sin grupos</div>
-      <div class="empty-sub">Crea el primero</div>
-    </div>`;
+  if (!lista.length) {
+    container.innerHTML = `<div class="empty-card"><div class="empty-icon">📦</div><div class="empty-title">Sin grupos</div></div>`;
     return;
   }
-
-  const statusColor = { open:"#f59e0b", active:"#22c55e", cancelled:"#ef4444", completed:"#6366f1" };
-  const statusLabel = { open:"Abierto", active:"Activo", cancelled:"Cancelado", completed:"Completado" };
-
+  const SC = { open:"#f59e0b", active:"#22c55e", cancelled:"#ef4444", completed:"#6366f1" };
+  const SL = { open:"Abierto", active:"Activo", cancelled:"Cancelado", completed:"Completado" };
   container.innerHTML = lista.map(g => {
-    const pct = Math.min(((g.current_count||0)/(g.min_members||5))*100, 100);
-    const col  = statusColor[g.status] || "#9ca3af";
-
-    return `
-    <div class="grupo-card" onclick="window._verGrupo('${g.id}')">
+    const col  = SC[g.status]||"#9ca3af";
+    const pend = pedidos.filter(p => p.producto_id===g.id && p.payment_status==="uploaded").length;
+    const verif= pedidos.filter(p => p.producto_id===g.id && p.payment_status==="verified").length;
+    return `<div class="grupo-card" onclick="window._verGrupo('${g.id}')">
       <div class="grupo-left">
-        <div class="grupo-emoji">${g.emoji || "📦"}</div>
+        <div class="grupo-emoji">${g.emoji||"📦"}</div>
         <div>
           <div class="grupo-name">${g.product_name}</div>
-          <div class="grupo-zone">📍 ${g.zone || g.delivery_point || "—"}</div>
-          <div class="grupo-bar-wrap">
-            <div class="grupo-bar-track">
-              <div class="grupo-bar-fill" style="width:${pct}%;background:${col}"></div>
-            </div>
-            <span class="grupo-count">${g.current_count||0}/${g.min_members||5}</span>
+          <div class="grupo-zone">📍 ${g.zone||"—"}</div>
+          <div style="display:flex;gap:6px;margin-top:4px;">
+            ${pend>0?`<span style="background:#fef9c3;color:#854d0e;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">⏳ ${pend} pend.</span>`:""}
+            ${verif>0?`<span style="background:#dcfce7;color:#15803d;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">✅ ${verif} ok</span>`:""}
           </div>
         </div>
       </div>
       <div class="grupo-right">
-        <div class="grupo-status" style="background:${col}22;color:${col};border:1px solid ${col}44">
-          ${statusLabel[g.status]||g.status}
-        </div>
+        <div class="grupo-status" style="background:${col}22;color:${col};border:1px solid ${col}44">${SL[g.status]||g.status}</div>
         <div class="grupo-price">S/${(g.price_per_unit||0).toFixed(0)}</div>
         <div class="grupo-arrow">›</div>
       </div>
@@ -216,120 +202,53 @@ function renderGrupos() {
   }).join("");
 }
 
-// ── DETALLE GRUPO ─────────────────────────────────────────────────────────────
-window._verGrupo = async (groupId) => {
-  vistaGrupo = groupId;
+window._verGrupo = (groupId) => {
   const g = grupos[groupId];
   if (!g) return;
-
-  const membersSnap = await getDocs(collection(db, `grupay_groups/${groupId}/members`));
-  const members = membersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-  const statusColor = { uploaded:"#f59e0b", verified:"#22c55e", rejected:"#ef4444", pending:"#9ca3af" };
-  const statusLabel = { uploaded:"Pendiente", verified:"Aprobado", rejected:"Rechazado", pending:"Sin pago" };
-
-  const container = document.getElementById("tab-content");
-  container.innerHTML = `
+  activeTab = "detalle";
+  const pedidosG = pedidos.filter(p => p.producto_id===groupId);
+  const SC = { uploaded:"#f59e0b", verified:"#22c55e", rejected:"#ef4444" };
+  const SL = { uploaded:"Pendiente", verified:"Aprobado", rejected:"Rechazado" };
+  document.getElementById("tab-content").innerHTML = `
     <div class="detalle-header">
       <button class="btn-back" onclick="window._setTab('grupos')">← Grupos</button>
       <span class="detalle-title">${g.emoji||"📦"} ${g.product_name}</span>
     </div>
-
     <div class="detalle-stats-row">
-      <div class="d-stat"><div class="d-stat-v">${g.current_count||0}/${g.min_members||5}</div><div class="d-stat-l">Personas</div></div>
-      <div class="d-stat"><div class="d-stat-v">S/${(g.price_per_unit||0).toFixed(0)}</div><div class="d-stat-l">Precio/u</div></div>
-      <div class="d-stat"><div class="d-stat-v">${g.status}</div><div class="d-stat-l">Estado</div></div>
+      <div class="d-stat"><div class="d-stat-v">${pedidosG.filter(p=>p.payment_status==="verified").length}</div><div class="d-stat-l">Pagados</div></div>
+      <div class="d-stat"><div class="d-stat-v">${pedidosG.filter(p=>p.payment_status==="uploaded").length}</div><div class="d-stat-l">Pendientes</div></div>
+      <div class="d-stat"><div class="d-stat-v">S/${(g.price_per_unit||0).toFixed(0)}</div><div class="d-stat-l">Precio</div></div>
     </div>
-
-    <div class="section-label">Miembros (${members.length})</div>
-    ${members.length === 0
-      ? '<div class="empty-sub" style="padding:20px;text-align:center;">Sin miembros aún</div>'
-      : members.map(m => {
-          const col = statusColor[m.payment_status] || "#9ca3af";
-          return `
-          <div class="member-row">
-            <div class="member-avatar" style="background:${col}22;color:${col}">${(m.nombre||m.name||"?")[0].toUpperCase()}</div>
+    <div class="section-label">Pedidos (${pedidosG.length})</div>
+    ${!pedidosG.length
+      ? '<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px;">Sin pedidos aún</div>'
+      : pedidosG.map(p => {
+          const col=SC[p.payment_status]||"#9ca3af";
+          return `<div class="member-row">
+            <div class="member-avatar" style="background:${col}22;color:${col}">${(p.nombre||"?")[0].toUpperCase()}</div>
             <div class="member-info">
-              <div class="member-name">${m.nombre||m.name||"Cliente"}</div>
-              <div class="member-meta">${m.tel||m.phone||"—"} · S/${(m.amount||m.monto||0).toFixed(0)}</div>
+              <div class="member-name">${p.nombre||"Cliente"}</div>
+              <div class="member-meta">📱 ${p.tel||"—"} · 📍 ${p.sector||"—"} · S/${parseFloat(p.monto||0).toFixed(1)}</div>
             </div>
-            <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44">
-              ${statusLabel[m.payment_status]||m.payment_status}
-            </div>
+            <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44">${SL[p.payment_status]||p.payment_status}</div>
           </div>`;
-        }).join("")
-    }
-
-    <div class="section-label" style="margin-top:20px;">Acciones rápidas</div>
+        }).join("")}
+    <div class="section-label" style="margin-top:20px;">Acciones</div>
     <div class="quick-actions">
-      ${g.status === "open" ? `
-        <button class="qa-btn qa-green" onclick="window._forzarActivar('${groupId}')">
-          ⚡ Activar grupo ahora
-        </button>` : ""}
-      ${g.status !== "cancelled" ? `
-        <button class="qa-btn qa-red" onclick="window._cancelarGrupo('${groupId}')">
-          ❌ Cancelar grupo
-        </button>` : ""}
-      <a class="qa-btn qa-wa"
-        href="https://wa.me/51999999999?text=${encodeURIComponent(`🔔 Actualización grupo ${g.product_name}: ${g.current_count||0}/${g.min_members||5} personas. Estado: ${g.status}`)}"
-        target="_blank">
-        💬 Notificar por WA
-      </a>
+      ${g.status==="open"?`<button class="qa-btn qa-green" onclick="window._forzarActivar('${groupId}')">⚡ Activar grupo</button>`:""}
+      ${g.status!=="cancelled"?`<button class="qa-btn qa-red" onclick="window._cancelarGrupo('${groupId}')">❌ Cancelar grupo</button>`:""}
     </div>`;
 };
 
-// ── ACCIONES PAGO ─────────────────────────────────────────────────────────────
-window._aprobarPago = async (docPath, groupId, memberId) => {
-  const card = document.getElementById(`pago-${memberId}`);
-  if (card) { card.style.opacity = "0.4"; card.style.pointerEvents = "none"; }
-
-  try {
-    await updateDoc(doc(db, docPath), {
-      payment_status: "verified",
-      verified_at: serverTimestamp()
-    });
-
-    // Recalcular si el grupo se completó
-    const g = grupos[groupId];
-    if (g) {
-      const verifiedSnap = await getDocs(
-        query(collection(db, `grupay_groups/${groupId}/members`),
-          where("payment_status","==","verified"))
-      );
-      const verifiedCount = verifiedSnap.size;
-      const updates = { current_count: verifiedCount };
-      if (verifiedCount >= (g.min_members||5) && g.status === "open") {
-        updates.status = "active";
-        showToast(`🎉 ¡Grupo ${g.product_name} completado!`);
-      }
-      await updateDoc(doc(db, "grupay_groups", groupId), updates);
-    }
-    showToast("✅ Pago aprobado");
-  } catch(e) {
-    console.error(e);
-    showToast("❌ Error al aprobar");
-    if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
-  }
-};
-
-window._rechazarPago = async (docPath, memberId) => {
-  if (!confirm("¿Rechazar este pago?")) return;
-  await updateDoc(doc(db, docPath), { payment_status: "rejected" });
-  showToast("🗑 Pago rechazado");
-};
-
-window._forzarActivar = async (groupId) => {
+window._forzarActivar = async (gid) => {
   if (!confirm("¿Activar el grupo manualmente?")) return;
-  await updateDoc(doc(db, "grupay_groups", groupId), { status: "active" });
-  showToast("⚡ Grupo activado");
-  window._setTab("grupos");
+  await updateDoc(doc(db,"grupay_groups",gid),{status:"active"});
+  showToast("⚡ Grupo activado"); window._setTab("grupos");
 };
-
-window._cancelarGrupo = async (groupId) => {
-  if (!confirm("¿Cancelar este grupo? Se notificará a los miembros.")) return;
-  await updateDoc(doc(db, "grupay_groups", groupId), { status: "cancelled" });
-  showToast("❌ Grupo cancelado");
-  window._setTab("grupos");
+window._cancelarGrupo = async (gid) => {
+  if (!confirm("¿Cancelar este grupo?")) return;
+  await updateDoc(doc(db,"grupay_groups",gid),{status:"cancelled"});
+  showToast("❌ Grupo cancelado"); window._setTab("grupos");
 };
 
 // ── TAB NUEVO GRUPO ───────────────────────────────────────────────────────────
@@ -337,77 +256,42 @@ function renderNuevoGrupo() {
   document.getElementById("tab-content").innerHTML = `
     <div class="form-section">
       <div class="form-title">➕ Nuevo Grupo</div>
-
-      <label class="form-label">Emoji del producto</label>
-      <input id="ng-emoji" class="form-input" type="text" placeholder="🧀" maxlength="2" value="📦">
-
+      <label class="form-label">Emoji</label>
+      <input id="ng-emoji" class="form-input" placeholder="📦" maxlength="2" value="📦">
       <label class="form-label">Nombre del producto</label>
-      <input id="ng-nombre" class="form-input" placeholder="Queso Fresco Cajamarca 1kg">
-
+      <input id="ng-nombre" class="form-input" placeholder="Queso Fresco 1kg">
       <label class="form-label">Precio por unidad (S/)</label>
       <input id="ng-precio" class="form-input" type="number" placeholder="14.00" step="0.50">
-
-      <label class="form-label">Ticket mínimo por persona (S/)</label>
-      <input id="ng-ticket" class="form-input" type="number" placeholder="50" value="50">
-
+      <label class="form-label">Unidad (kg, und, 250g…)</label>
+      <input id="ng-unit" class="form-input" placeholder="kg" value="kg">
       <label class="form-label">Mínimo de personas</label>
-      <input id="ng-min" class="form-input" type="number" placeholder="5" value="5" min="2" max="20">
-
+      <input id="ng-min" class="form-input" type="number" value="5" min="2">
       <label class="form-label">Zona de entrega</label>
       <input id="ng-zona" class="form-input" placeholder="San Borja">
-
-      <label class="form-label">Dirección exacta de entrega</label>
-      <input id="ng-direccion" class="form-input" placeholder="Jr. Los Cactus 340, Piso 2">
-
-      <label class="form-label">Duración (horas)</label>
-      <input id="ng-horas" class="form-input" type="number" placeholder="24" value="24" min="1" max="72">
-
-      <button class="btn-crear-grupo" onclick="window._crearGrupo()">
-        🚀 Crear Grupo
-      </button>
+      <button class="btn-crear-grupo" onclick="window._crearGrupo()">🚀 Crear Grupo</button>
     </div>`;
 }
 
 window._crearGrupo = async () => {
-  const nombre    = document.getElementById("ng-nombre").value.trim();
-  const emoji     = document.getElementById("ng-emoji").value.trim() || "📦";
-  const precio    = parseFloat(document.getElementById("ng-precio").value);
-  const ticket    = parseFloat(document.getElementById("ng-ticket").value) || 50;
-  const minPers   = parseInt(document.getElementById("ng-min").value) || 5;
-  const zona      = document.getElementById("ng-zona").value.trim();
-  const direccion = document.getElementById("ng-direccion").value.trim();
-  const horas     = parseInt(document.getElementById("ng-horas").value) || 24;
-
-  if (!nombre || !precio || !zona) {
-    showToast("⚠ Completa nombre, precio y zona"); return;
-  }
-
+  const nombre = document.getElementById("ng-nombre").value.trim();
+  const emoji  = document.getElementById("ng-emoji").value.trim()||"📦";
+  const precio = parseFloat(document.getElementById("ng-precio").value);
+  const unit   = document.getElementById("ng-unit").value.trim()||"kg";
+  const min    = parseInt(document.getElementById("ng-min").value)||5;
+  const zona   = document.getElementById("ng-zona").value.trim();
+  if (!nombre||!precio||!zona) { showToast("⚠ Completa nombre, precio y zona"); return; }
   const btn = document.querySelector(".btn-crear-grupo");
-  btn.textContent = "Creando...";
-  btn.disabled = true;
-
+  btn.textContent="Creando..."; btn.disabled=true;
   try {
-    await addDoc(collection(db, "grupay_groups"), {
-      product_name:   nombre,
-      emoji,
-      price_per_unit: precio,
-      min_ticket:     ticket,
-      min_members:    minPers,
-      current_count:  0,
-      status:         "open",
-      zone:           zona,
-      delivery_point: direccion || zona,
-      hours_left:     horas,
-      created_at:     serverTimestamp(),
-      expires_at:     Timestamp.fromDate(new Date(Date.now() + horas * 3600 * 1000))
+    await addDoc(collection(db,"grupay_groups"),{
+      product_name:nombre, emoji, price_per_unit:precio, unit,
+      min_members:min, current_count:0, status:"open", has_discount:true,
+      zone:zona, delivery_point:zona, created_at:serverTimestamp()
     });
-    showToast("🎉 Grupo creado correctamente");
-    window._setTab("grupos");
+    showToast("🎉 Grupo creado"); window._setTab("grupos");
   } catch(e) {
-    console.error(e);
-    showToast("❌ Error al crear grupo");
-    btn.textContent = "🚀 Crear Grupo";
-    btn.disabled = false;
+    showToast("❌ Error: "+e.message);
+    btn.textContent="🚀 Crear Grupo"; btn.disabled=false;
   }
 };
 
@@ -416,102 +300,56 @@ window._setTab = (tab) => {
   activeTab = tab;
   document.querySelectorAll(".tab-btn").forEach(b =>
     b.classList.toggle("tab-active", b.dataset.tab === tab));
-
-  if (tab === "pagos")   renderPagos();
-  if (tab === "grupos")  renderGrupos();
-  if (tab === "nuevo")   renderNuevoGrupo();
+  if (tab==="pagos")  renderPagos();
+  if (tab==="grupos") renderGrupos();
+  if (tab==="nuevo")  renderNuevoGrupo();
 };
 
-// ── VER CAPTURA ───────────────────────────────────────────────────────────────
 window._verCaptura = (url) => {
   document.getElementById("lightbox-img").src = url;
   document.getElementById("lightbox").classList.add("on");
 };
-window._cerrarLightbox = () => {
-  document.getElementById("lightbox").classList.remove("on");
-};
+window._cerrarLightbox = () => document.getElementById("lightbox").classList.remove("on");
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
-function formatHora(date) {
-  return date.toLocaleTimeString("es-PE", { hour:"2-digit", minute:"2-digit" });
+function formatHora(d) {
+  return d.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"});
 }
-
-let toastTimer;
-function showToast(msg, duration = 3000) {
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.classList.add("on");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("on"), duration);
+let _tt;
+function showToast(msg,dur=3000){
+  const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("on");
+  clearTimeout(_tt); _tt=setTimeout(()=>t.classList.remove("on"),dur);
 }
 </script>
 
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 :root{
-  --bg:#f4f6f9;--surface:#fff;--card:#fff;--border:#e2e8f0;
+  --bg:#f4f6f9;--border:#e2e8f0;
   --green:#16a34a;--green-d:#15803d;--green-l:#f0fdf4;--green-b:#dcfce7;
   --amber:#d97706;--amber-l:#fffbeb;--amber-b:#fde68a;
   --red:#dc2626;--red-l:#fef2f2;--red-b:#fecaca;
-  --wa:#16a34a;--wa-l:#f0fdf4;
   --text:#1e293b;--muted:#64748b;--subtle:#94a3b8;
 }
-html,body{height:100%;background:var(--bg);color:var(--text);
-  font-family:'Syne',sans-serif;overflow:hidden;}
-
-/* LOGIN */
-#login-screen{display:flex;flex-direction:column;align-items:center;
-  justify-content:center;min-height:100vh;padding:24px;
-  background:linear-gradient(160deg,var(--green-l) 0%,#fff 60%,var(--green-l) 100%);}
-.login-logo{font-size:52px;margin-bottom:16px;}
-.login-title{font-size:28px;font-weight:900;letter-spacing:-1.5px;margin-bottom:4px;color:var(--text);}
-.login-title span{color:var(--green);}
-.login-sub{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;
-  letter-spacing:2px;margin-bottom:32px;}
-.login-card{background:#fff;border:2px solid var(--border);
-  border-radius:20px;padding:24px;width:100%;max-width:360px;
-  box-shadow:0 8px 32px rgba(0,0,0,.08);}
-.l-label{font-size:11px;font-weight:700;color:var(--muted);display:block;
-  margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
-.l-input{width:100%;padding:12px 14px;background:var(--bg);
-  border:2px solid var(--border);border-radius:10px;color:var(--text);
-  font-size:14px;font-family:'Syne',sans-serif;margin-bottom:14px;outline:none;}
-.l-input:focus{border-color:var(--green);background:#fff;}
-.l-btn{width:100%;padding:14px;background:linear-gradient(135deg,var(--green-d),var(--green));
-  color:#fff;border:none;border-radius:12px;font-family:'Syne',sans-serif;
-  font-weight:900;font-size:15px;cursor:pointer;
-  box-shadow:0 4px 16px rgba(22,163,74,.3);}
-
-/* APP SHELL */
-#admin-app{display:none;flex-direction:column;height:100vh;overflow:hidden;}
-
-/* TOP BAR */
-.topbar{background:#fff;border-bottom:2px solid var(--border);
-  padding:12px 16px;display:flex;align-items:center;justify-content:space-between;
-  flex-shrink:0;box-shadow:0 1px 6px rgba(0,0,0,.04);}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;overflow:hidden;}
+#admin-app{display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+.topbar{background:#fff;border-bottom:2px solid var(--border);padding:12px 16px;
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+  box-shadow:0 1px 6px rgba(0,0,0,.04);}
 .topbar-logo{display:flex;align-items:center;gap:8px;}
-.topbar-ic{width:32px;height:32px;background:linear-gradient(135deg,var(--green-d),var(--green));
+.topbar-ic{width:32px;height:32px;background:linear-gradient(135deg,#14532d,#16a34a);
   border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;}
-.topbar-name{font-size:17px;font-weight:900;letter-spacing:-.5px;color:var(--text);}
+.topbar-name{font-size:17px;font-weight:900;letter-spacing:-.5px;}
 .topbar-name span{color:var(--green);}
 .topbar-badge{font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;}
-.logout-btn{background:none;border:1.5px solid var(--border);color:var(--muted);
-  padding:5px 12px;border-radius:8px;font-size:11px;cursor:pointer;font-family:'Syne',sans-serif;}
-
-/* STATS BAR */
 .stats-bar{display:flex;background:#fff;border-bottom:2px solid var(--border);flex-shrink:0;}
 .stat-item{flex:1;padding:10px 6px;text-align:center;border-right:1px solid var(--border);}
 .stat-item:last-child{border-right:none;}
-.stat-num{font-size:22px;font-weight:900;line-height:1;color:var(--text);}
+.stat-num{font-size:22px;font-weight:900;line-height:1;}
 .stat-num.amber{color:var(--amber);}
 .stat-num.green{color:var(--green);}
 .stat-lbl{font-size:8px;color:var(--muted);font-family:'DM Mono',monospace;
   text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
-
-/* SCROLL AREA */
-.scroll-area{flex:1;overflow-y:auto;padding:14px;-webkit-overflow-scrolling:touch;background:var(--bg);}
-
-/* TABS */
+.scroll-area{flex:1;overflow-y:auto;padding:14px;background:var(--bg);}
 .tabs{display:flex;border-top:2px solid var(--border);flex-shrink:0;background:#fff;}
 .tab-btn{flex:1;padding:11px 4px 10px;background:none;border:none;
   color:var(--muted);font-family:'Syne',sans-serif;font-weight:800;font-size:11px;
@@ -521,125 +359,92 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .tab-btn.tab-active::after{content:'';position:absolute;top:0;left:20%;right:20%;
   height:2px;background:var(--green);border-radius:0 0 3px 3px;}
 .tab-icon{font-size:18px;}
-.tab-badge{position:absolute;top:6px;right:calc(50% - 18px);
-  background:var(--red);color:#fff;width:16px;height:16px;
-  border-radius:50%;font-size:9px;font-weight:900;
+.tab-badge{position:absolute;top:6px;right:calc(50% - 18px);background:var(--red);
+  color:#fff;width:16px;height:16px;border-radius:50%;font-size:9px;font-weight:900;
   display:none;align-items:center;justify-content:center;}
-
-/* PAGO CARD */
 .pago-card{background:#fff;border:2px solid var(--border);border-radius:16px;
   padding:14px;margin-bottom:12px;transition:opacity .3s;
   box-shadow:0 2px 8px rgba(0,0,0,.04);}
 .pago-header{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;}
 .pago-avatar{width:46px;height:46px;background:var(--amber-l);border:1.5px solid var(--amber-b);
-  border-radius:12px;display:flex;align-items:center;justify-content:center;
-  font-size:22px;flex-shrink:0;}
+  border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;}
 .pago-info{flex:1;}
-.pago-nombre{font-size:15px;font-weight:800;margin-bottom:2px;color:var(--text);}
-.pago-grupo{font-size:11px;color:var(--muted);margin-bottom:5px;}
-.pago-meta{display:flex;gap:10px;flex-wrap:wrap;}
+.pago-nombre{font-size:15px;font-weight:800;margin-bottom:2px;}
+.pago-grupo{font-size:11px;color:var(--muted);margin-bottom:2px;}
+.pago-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;}
 .pago-tel,.pago-hora{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;}
 .pago-monto{font-size:24px;font-weight:900;color:var(--amber);flex-shrink:0;}
-
 .screenshot-wrap{position:relative;border-radius:12px;overflow:hidden;
   margin-bottom:12px;cursor:pointer;border:2px solid var(--border);}
-.screenshot-thumb{width:100%;height:160px;object-fit:cover;display:block;}
+.screenshot-thumb{width:100%;height:180px;object-fit:cover;display:block;}
 .screenshot-overlay{position:absolute;inset:0;background:rgba(0,0,0,.35);
   display:flex;align-items:center;justify-content:center;
   font-size:14px;font-weight:800;color:#fff;opacity:0;transition:opacity .2s;}
 .screenshot-wrap:hover .screenshot-overlay,.screenshot-wrap:active .screenshot-overlay{opacity:1;}
-.no-screenshot{background:var(--bg);border:2px dashed var(--border);
-  border-radius:10px;padding:14px;text-align:center;font-size:12px;
-  color:var(--muted);margin-bottom:12px;}
-
+.no-screenshot{background:var(--bg);border:2px dashed var(--border);border-radius:10px;
+  padding:14px;text-align:center;font-size:12px;color:var(--muted);margin-bottom:12px;}
 .pago-actions{display:flex;gap:8px;}
-.btn-aprobar{flex:2;padding:12px;background:var(--green-l);
-  color:var(--green-d);border:2px solid var(--green-b);border-radius:10px;
-  font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;
-  transition:background .15s;}
-.btn-aprobar:hover{background:var(--green-b);}
-.btn-rechazar{flex:1;padding:12px;background:var(--red-l);
-  color:var(--red);border:2px solid var(--red-b);border-radius:10px;
+.btn-aprobar{flex:2;padding:12px;background:var(--green-l);color:var(--green-d);
+  border:2px solid var(--green-b);border-radius:10px;
+  font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;}
+.btn-rechazar{flex:1;padding:12px;background:var(--red-l);color:var(--red);
+  border:2px solid var(--red-b);border-radius:10px;
   font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;}
-.btn-wa-pago{flex:0 0 46px;padding:12px;background:var(--green-l);
-  color:var(--green-d);border:2px solid var(--green-b);border-radius:10px;
+.btn-wa-pago{flex:0 0 46px;padding:12px;background:var(--green-l);color:var(--green-d);
+  border:2px solid var(--green-b);border-radius:10px;
   font-size:16px;display:flex;align-items:center;justify-content:center;text-decoration:none;}
-
-/* GRUPO CARD */
 .grupo-card{background:#fff;border:2px solid var(--border);border-radius:14px;
   padding:14px;margin-bottom:10px;display:flex;align-items:center;
-  gap:12px;cursor:pointer;transition:border-color .2s,box-shadow .2s;
-  box-shadow:0 1px 4px rgba(0,0,0,.04);}
-.grupo-card:hover{border-color:var(--green);box-shadow:0 4px 16px rgba(22,163,74,.1);}
+  gap:12px;cursor:pointer;transition:border-color .2s;box-shadow:0 1px 4px rgba(0,0,0,.04);}
+.grupo-card:hover{border-color:var(--green);}
 .grupo-left{display:flex;gap:10px;flex:1;align-items:center;min-width:0;}
 .grupo-emoji{width:42px;height:42px;background:var(--green-l);border:1.5px solid var(--green-b);
   border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
-.grupo-name{font-size:13px;font-weight:800;margin-bottom:2px;color:var(--text);
+.grupo-name{font-size:13px;font-weight:800;margin-bottom:2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
-.grupo-zone{font-size:10px;color:var(--muted);margin-bottom:6px;}
-.grupo-bar-wrap{display:flex;align-items:center;gap:6px;}
-.grupo-bar-track{flex:1;height:5px;background:var(--border);border-radius:3px;overflow:hidden;min-width:60px;}
-.grupo-bar-fill{height:100%;border-radius:3px;transition:width .5s;}
-.grupo-count{font-size:10px;font-weight:900;color:var(--text);white-space:nowrap;}
+.grupo-zone{font-size:10px;color:var(--muted);}
 .grupo-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}
 .grupo-status{font-size:9px;font-weight:800;padding:3px 9px;border-radius:6px;
   text-transform:uppercase;letter-spacing:.5px;font-family:'DM Mono',monospace;}
 .grupo-price{font-size:17px;font-weight:900;color:var(--green);}
 .grupo-arrow{font-size:18px;color:var(--subtle);}
-
-/* DETALLE */
 .detalle-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
 .btn-back{background:#fff;border:2px solid var(--border);color:var(--muted);
-  padding:7px 12px;border-radius:10px;font-family:'Syne',sans-serif;
-  font-weight:700;font-size:12px;cursor:pointer;}
-.detalle-title{font-size:15px;font-weight:900;flex:1;color:var(--text);}
+  padding:7px 12px;border-radius:10px;font-family:'Syne',sans-serif;font-weight:700;font-size:12px;cursor:pointer;}
+.detalle-title{font-size:15px;font-weight:900;flex:1;}
 .detalle-stats-row{display:flex;gap:8px;margin-bottom:20px;}
-.d-stat{flex:1;background:#fff;border:2px solid var(--border);
-  border-radius:12px;padding:10px;text-align:center;}
+.d-stat{flex:1;background:#fff;border:2px solid var(--border);border-radius:12px;padding:10px;text-align:center;}
 .d-stat-v{font-size:16px;font-weight:900;color:var(--green);}
 .d-stat-l{font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;}
 .section-label{font-size:10px;font-weight:900;color:var(--muted);
   text-transform:uppercase;letter-spacing:2px;font-family:'DM Mono',monospace;margin-bottom:10px;}
-.member-row{display:flex;align-items:center;gap:10px;padding:11px 0;
-  border-bottom:1px solid var(--border);}
+.member-row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border);}
 .member-avatar{width:36px;height:36px;border-radius:10px;display:flex;
   align-items:center;justify-content:center;font-size:15px;font-weight:900;flex-shrink:0;}
 .member-info{flex:1;}
-.member-name{font-size:13px;font-weight:800;color:var(--text);}
+.member-name{font-size:13px;font-weight:800;}
 .member-meta{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;}
 .member-status{font-size:9px;font-weight:800;padding:3px 9px;border-radius:6px;
   white-space:nowrap;font-family:'DM Mono',monospace;}
-
-/* QUICK ACTIONS */
 .quick-actions{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
-.qa-btn{padding:13px;border-radius:12px;font-family:'Syne',sans-serif;
-  font-weight:800;font-size:13px;cursor:pointer;text-align:center;
-  text-decoration:none;display:block;border:2px solid transparent;}
+.qa-btn{padding:13px;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;
+  font-size:13px;cursor:pointer;text-align:center;text-decoration:none;
+  display:block;border:2px solid transparent;}
 .qa-green{background:var(--green-l);color:var(--green-d);border-color:var(--green-b);}
 .qa-red{background:var(--red-l);color:var(--red);border-color:var(--red-b);}
-.qa-wa{background:var(--green-l);color:var(--green-d);border-color:var(--green-b);}
-
-/* FORM NUEVO GRUPO */
 .form-section{padding-bottom:24px;}
-.form-title{font-size:18px;font-weight:900;margin-bottom:20px;color:var(--text);}
+.form-title{font-size:18px;font-weight:900;margin-bottom:20px;}
 .form-label{font-size:11px;font-weight:700;color:var(--muted);display:block;
   margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;}
-.form-input{width:100%;padding:12px 14px;background:#fff;
-  border:2px solid var(--border);border-radius:10px;color:var(--text);
-  font-size:14px;font-family:'Syne',sans-serif;margin-bottom:14px;outline:none;}
+.form-input{width:100%;padding:12px 14px;background:#fff;border:2px solid var(--border);
+  border-radius:10px;font-size:14px;font-family:'Syne',sans-serif;margin-bottom:14px;outline:none;}
 .form-input:focus{border-color:var(--green);}
-.btn-crear-grupo{width:100%;padding:15px;background:linear-gradient(135deg,var(--green-d),var(--green));
-  color:#fff;border:none;border-radius:12px;font-family:'Syne',sans-serif;
-  font-weight:900;font-size:15px;cursor:pointer;margin-top:4px;
-  box-shadow:0 4px 16px rgba(22,163,74,.25);}
-
-/* EMPTY */
+.btn-crear-grupo{width:100%;padding:15px;background:linear-gradient(135deg,#14532d,#16a34a);
+  color:#fff;border:none;border-radius:12px;font-family:'Syne',sans-serif;font-weight:900;font-size:15px;cursor:pointer;}
 .empty-card{text-align:center;padding:60px 20px;}
 .empty-icon{font-size:48px;margin-bottom:12px;}
-.empty-title{font-size:17px;font-weight:900;margin-bottom:6px;color:var(--text);}
+.empty-title{font-size:17px;font-weight:900;margin-bottom:6px;}
 .empty-sub{font-size:13px;color:var(--muted);}
-
-/* LIGHTBOX */
 .lightbox{display:none;position:fixed;inset:0;background:rgba(15,20,30,.88);
   z-index:200;align-items:center;justify-content:center;padding:20px;}
 .lightbox.on{display:flex;}
@@ -648,37 +453,15 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .lightbox-close{position:absolute;top:16px;right:16px;background:rgba(255,255,255,.2);
   color:#fff;border:none;border-radius:50%;width:36px;height:36px;
   font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
-
-/* TOAST */
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(10px);
   background:var(--text);color:#fff;padding:11px 20px;border-radius:14px;
-  font-size:13px;font-weight:700;z-index:300;opacity:0;
-  white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,.2);
+  font-size:13px;font-weight:700;z-index:300;opacity:0;white-space:nowrap;
   transition:all .25s;pointer-events:none;}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
 </style>
 </head>
 <body>
-
-<!-- LOGIN -->
-<div id="login-screen">
-  <div class="login-logo">🛒</div>
-  <div class="login-title">Gru<span>Pay</span> Admin</div>
-  <div class="login-sub">PANEL DE GESTIÓN</div>
-  <div class="login-card">
-    <label class="l-label">Email</label>
-    <input type="email" id="login-email" class="l-input" placeholder="admin@neopisk.lat">
-    <label class="l-label">Contraseña</label>
-    <input type="password" id="login-pass" class="l-input" placeholder="••••••••"
-      onkeydown="if(event.key==='Enter')window._login()">
-    <button class="l-btn" id="login-btn" onclick="window._login()">Entrar →</button>
-  </div>
-</div>
-
-<!-- APP -->
 <div id="admin-app">
-
-  <!-- TOP BAR -->
   <div class="topbar">
     <div class="topbar-logo">
       <div class="topbar-ic">🛒</div>
@@ -687,66 +470,33 @@ html,body{height:100%;background:var(--bg);color:var(--text);
         <div class="topbar-badge">ADMIN · TIEMPO REAL</div>
       </div>
     </div>
-    <div class="topbar-right">
-      <button class="logout-btn" onclick="window._logout()">Salir</button>
-    </div>
   </div>
-
-  <!-- STATS BAR -->
   <div class="stats-bar">
-    <div class="stat-item">
-      <div class="stat-num amber" id="stat-pendientes">0</div>
-      <div class="stat-lbl">Pagos</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-num amber" id="stat-grupos-abiertos">0</div>
-      <div class="stat-lbl">Abiertos</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-num green" id="stat-grupos-activos">0</div>
-      <div class="stat-lbl">Activos</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-num" id="stat-total-grupos">0</div>
-      <div class="stat-lbl">Total</div>
-    </div>
+    <div class="stat-item"><div class="stat-num amber" id="stat-pendientes">0</div><div class="stat-lbl">Pagos</div></div>
+    <div class="stat-item"><div class="stat-num amber" id="stat-grupos-abiertos">0</div><div class="stat-lbl">Abiertos</div></div>
+    <div class="stat-item"><div class="stat-num green" id="stat-grupos-activos">0</div><div class="stat-lbl">Activos</div></div>
+    <div class="stat-item"><div class="stat-num" id="stat-total-grupos">0</div><div class="stat-lbl">Total</div></div>
   </div>
-
-  <!-- CONTENT -->
   <div class="scroll-area" id="tab-content">
-    <div class="empty-card">
-      <div class="empty-icon">⏳</div>
-      <div class="empty-title">Cargando...</div>
-    </div>
+    <div class="empty-card"><div class="empty-icon">⏳</div><div class="empty-title">Cargando...</div></div>
   </div>
-
-  <!-- TABS -->
   <div class="tabs">
     <button class="tab-btn tab-active" data-tab="pagos" onclick="window._setTab('pagos')">
-      <span class="tab-icon">💳</span>
-      <span>Pagos</span>
+      <span class="tab-icon">💳</span><span>Pagos</span>
       <span class="tab-badge" id="tab-badge-pagos">0</span>
     </button>
     <button class="tab-btn" data-tab="grupos" onclick="window._setTab('grupos')">
-      <span class="tab-icon">📦</span>
-      <span>Grupos</span>
+      <span class="tab-icon">📦</span><span>Grupos</span>
     </button>
     <button class="tab-btn" data-tab="nuevo" onclick="window._setTab('nuevo')">
-      <span class="tab-icon">➕</span>
-      <span>Nuevo</span>
+      <span class="tab-icon">➕</span><span>Nuevo</span>
     </button>
   </div>
-
 </div>
-
-<!-- LIGHTBOX -->
 <div class="lightbox" id="lightbox" onclick="window._cerrarLightbox()">
   <button class="lightbox-close" onclick="window._cerrarLightbox()">✕</button>
   <img id="lightbox-img" src="" alt="Captura de pago">
 </div>
-
-<!-- TOAST -->
 <div class="toast" id="toast"></div>
-
 </body>
 </html>
