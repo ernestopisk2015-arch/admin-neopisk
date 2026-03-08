@@ -28,7 +28,9 @@ const db  = getFirestore(app);
 
 let grupos   = {};
 let pedidos  = [];
+let soportes = [];
 let activeTab = "pagos";
+let filtroEstado = "todos"; // todos | uploaded | verified | rejected
 
 document.addEventListener("DOMContentLoaded", initListeners);
 
@@ -53,80 +55,183 @@ function initListeners() {
       renderPagos(); updateStats();
     }
   );
+
+  // SOPORTE — lee grupay_soporte en tiempo real
+  onSnapshot(
+    query(collection(db, "grupay_soporte"), orderBy("fecha","desc")),
+    snap => {
+      soportes = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+      renderSoporte(); updateStats();
+    }
+  );
 }
 
 function updateStats() {
-  const pend = pedidos.filter(p => p.payment_status === "uploaded");
-  const lista = Object.values(grupos);
-  document.getElementById("stat-pendientes").textContent       = pend.length;
-  document.getElementById("stat-grupos-abiertos").textContent  = lista.filter(g => g.status === "open").length;
-  document.getElementById("stat-grupos-activos").textContent   = lista.filter(g => g.status === "active").length;
-  document.getElementById("stat-total-grupos").textContent     = lista.length;
+  const pend   = pedidos.filter(p => p.payment_status === "uploaded");
+  const verif  = pedidos.filter(p => p.payment_status === "verified");
+  const spend  = soportes.filter(s => s.estado === "pendiente");
+  const lista  = Object.values(grupos);
+  document.getElementById("stat-pendientes").textContent      = pend.length;
+  document.getElementById("stat-verificados").textContent     = verif.length;
+  document.getElementById("stat-soporte").textContent         = spend.length;
+  document.getElementById("stat-total-grupos").textContent    = lista.length;
   const badge = document.getElementById("tab-badge-pagos");
   badge.textContent = pend.length;
   badge.style.display = pend.length > 0 ? "flex" : "none";
+  const badgeS = document.getElementById("tab-badge-soporte");
+  badgeS.textContent = spend.length;
+  badgeS.style.display = spend.length > 0 ? "flex" : "none";
 }
 
 // ── TAB PAGOS ─────────────────────────────────────────────────────────────────
 function renderPagos() {
   if (activeTab !== "pagos") return;
   const container = document.getElementById("tab-content");
-  const pend = pedidos.filter(p => p.payment_status === "uploaded");
 
-  if (!pend.length) {
-    container.innerHTML = `<div class="empty-card"><div class="empty-icon">✅</div><div class="empty-title">Todo verificado</div><div class="empty-sub">No hay pagos pendientes</div></div>`;
-    return;
-  }
+  // Filtrar según estado seleccionado
+  let lista = pedidos;
+  if (filtroEstado !== "todos") lista = pedidos.filter(p => p.payment_status === filtroEstado);
 
-  // Agrupar pedidos del mismo carrito (mismo tel + monto + sector + fecha cercana)
+  // Agrupar por carrito (mismo tel + monto + sector, pedidos con carrito:true del mismo momento)
   const agrupados = {};
-  pend.forEach(p => {
-    const key = `${p.tel}_${p.monto}_${p.sector}`;
+  lista.forEach(p => {
+    const key = p.carrito ? `${p.tel}_${p.monto}_${p.sector}` : p._id;
     if (!agrupados[key]) agrupados[key] = [];
     agrupados[key].push(p);
   });
 
-  container.innerHTML = Object.values(agrupados).map(grupo => {
-    const p      = grupo[0];
-    const monto  = parseFloat(p.monto) || 0;
-    const hora   = p.fecha?.toDate?.() ? formatHora(p.fecha.toDate()) : "—";
-    const ids    = grupo.map(x => x._id).join(",");
-    const esCarrito = grupo.length > 1;
-    const productos = grupo.map(x => `${x.producto_emoji||"📦"} ${x.producto_nombre}`).join("  ·  ");
+  const totalPend = pedidos.filter(p => p.payment_status === "uploaded").length;
+  const totalVerif = pedidos.filter(p => p.payment_status === "verified").length;
+  const totalRech = pedidos.filter(p => p.payment_status === "rejected").length;
 
-    return `<div class="pago-card" id="pago-${p._id}">
-      <div class="pago-header">
-        <div class="pago-avatar">${esCarrito ? "🛒" : (p.producto_emoji||"📦")}</div>
-        <div class="pago-info">
-          <div class="pago-nombre">${p.nombre||"Cliente"}</div>
-          <div class="pago-grupo">${esCarrito ? `Carrito · ${grupo.length} productos` : p.producto_nombre}</div>
-          <div style="font-size:10px;color:var(--muted);margin:3px 0;">${productos}</div>
-          <div class="pago-meta">
-            <span class="pago-tel">📱 ${p.tel||"—"}</span>
-            <span class="pago-tel">📍 ${p.sector||"—"}</span>
-            <span class="pago-hora">🕐 ${hora}</span>
-          </div>
-        </div>
-        <div class="pago-monto">S/${monto.toFixed(1)}</div>
-      </div>
+  const SC = { uploaded:"#d97706", verified:"#16a34a", rejected:"#dc2626" };
+  const SL = { uploaded:"⏳ Pendiente", verified:"✅ Aprobado", rejected:"❌ Rechazado" };
 
-      ${p.payment_screenshot_url
-        ? `<div class="screenshot-wrap" onclick="window._verCaptura('${p.payment_screenshot_url}')">
-             <img src="${p.payment_screenshot_url}" class="screenshot-thumb" alt="Captura Yape">
-             <div class="screenshot-overlay">🔍 Ver captura</div>
-           </div>`
-        : `<div class="no-screenshot">📭 Sin captura subida</div>`}
+  container.innerHTML = `
+    <!-- FILTROS -->
+    <div style="display:flex;gap:6px;margin-bottom:14px;overflow-x:auto;padding-bottom:2px;">
+      ${[
+        ["todos","🗂 Todos", pedidos.length, "#1e293b"],
+        ["uploaded","⏳ Pendientes", totalPend, "#d97706"],
+        ["verified","✅ Aprobados", totalVerif, "#16a34a"],
+        ["rejected","❌ Rechazados", totalRech, "#dc2626"]
+      ].map(([val,lbl,cnt,col])=>`
+        <button onclick="window._filtrar('${val}')"
+          style="flex-shrink:0;padding:6px 12px;border-radius:99px;border:2px solid ${filtroEstado===val?col:'#e2e8f0'};
+          background:${filtroEstado===val?col+'18':'#fff'};color:${filtroEstado===val?col:'#64748b'};
+          font-family:'Syne',sans-serif;font-weight:800;font-size:11px;cursor:pointer;white-space:nowrap;">
+          ${lbl} <span style="font-size:10px;opacity:.8;">(${cnt})</span>
+        </button>`).join("")}
+    </div>
 
-      <div class="pago-actions">
-        <button class="btn-aprobar" onclick="window._aprobarPedidos('${ids}','${p.tel||''}','${p.nombre||''}',${monto})">✅ Aprobar</button>
-        <button class="btn-rechazar" onclick="window._rechazarPedidos('${ids}')">❌ Rechazar</button>
-        <a class="btn-wa-pago"
-           href="https://wa.me/51${(p.tel||'').replace(/\D/g,'')}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 🎉 Tu pago de S/${monto.toFixed(1)} en GruPay fue aprobado ✅. Ya estás en el grupo de ${p.sector||'tu sector'}. Pronto recibirás tu pedido 🛒`)}"
-           target="_blank">💬</a>
-      </div>
-    </div>`;
-  }).join("");
+    ${!Object.keys(agrupados).length
+      ? `<div class="empty-card"><div class="empty-icon">${filtroEstado==="uploaded"?"✅":"📭"}</div>
+         <div class="empty-title">${filtroEstado==="uploaded"?"Sin pagos pendientes":"Sin resultados"}</div></div>`
+      : Object.values(agrupados).map(grupo => {
+          const p      = grupo[0];
+          const monto  = parseFloat(p.monto) || 0;
+          const fecha  = p.fecha?.toDate?.() ? formatFecha(p.fecha.toDate()) : "—";
+          const ids    = grupo.map(x => x._id).join(",");
+          const esCarrito = grupo.length > 1;
+          const productos = grupo.map(x => `<span style="background:#f1f5f9;border-radius:6px;padding:2px 6px;font-size:10px;">${x.producto_emoji||"📦"} ${x.producto_nombre}</span>`).join(" ");
+          const estado = p.payment_status;
+          const col    = SC[estado] || "#9ca3af";
+          const waNum  = `51${(p.tel||"").replace(/\D/g,"")}`;
+
+          return `<div class="pago-card" style="border-left:4px solid ${col};">
+
+            <!-- ESTADO BADGE -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <span style="background:${col}18;color:${col};border:1.5px solid ${col}44;
+                font-size:10px;font-weight:800;padding:3px 10px;border-radius:99px;font-family:'DM Mono',monospace;">
+                ${SL[estado]||estado}
+              </span>
+              <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${fecha}</span>
+            </div>
+
+            <!-- CLIENTE -->
+            <div class="pago-header">
+              <div class="pago-avatar" style="background:${col}18;border-color:${col}44;">
+                ${esCarrito ? "🛒" : (p.producto_emoji||"📦")}
+              </div>
+              <div class="pago-info">
+                <div class="pago-nombre">${p.nombre||"Cliente"}</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0;">
+                  <a href="https://wa.me/${waNum}" target="_blank"
+                    style="background:#dcfce7;color:#15803d;border:1.5px solid #bbf7d0;border-radius:8px;
+                    padding:3px 10px;font-size:11px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;">
+                    💬 ${p.tel||"—"}
+                  </a>
+                  <span style="background:#f1f5f9;color:#475569;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">
+                    📍 ${p.sector||"—"}
+                  </span>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">${productos}</div>
+              </div>
+              <div class="pago-monto" style="color:${col};">S/${monto.toFixed(1)}</div>
+            </div>
+
+            <!-- DATOS DE ENTREGA -->
+            <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:12px;display:flex;flex-direction:column;gap:6px;">
+              <div style="font-size:9px;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:2px;font-family:'DM Mono',monospace;">Datos de entrega</div>
+              <div style="display:flex;align-items:flex-start;gap:6px;">
+                <span style="font-size:13px;flex-shrink:0;">📍</span>
+                <div>
+                  <div style="font-size:10px;color:#94a3b8;font-weight:600;">Dirección</div>
+                  <div style="font-size:12px;font-weight:700;color:${p.direccion?"#1e293b":"#ef4444"};">${p.direccion||"⚠ No registrada"}</div>
+                </div>
+              </div>
+              ${p.referencia?`<div style="display:flex;align-items:flex-start;gap:6px;">
+                <span style="font-size:13px;flex-shrink:0;">🚪</span>
+                <div>
+                  <div style="font-size:10px;color:#94a3b8;font-weight:600;">Referencia</div>
+                  <div style="font-size:12px;font-weight:700;color:#1e293b;">${p.referencia}</div>
+                </div>
+              </div>`:""}
+              ${p.horario?`<div style="display:flex;align-items:flex-start;gap:6px;">
+                <span style="font-size:13px;flex-shrink:0;">🕐</span>
+                <div>
+                  <div style="font-size:10px;color:#94a3b8;font-weight:600;">Horario preferido</div>
+                  <div style="font-size:12px;font-weight:700;color:#1e293b;">${p.horario}</div>
+                </div>
+              </div>`:""}
+            </div>
+
+            <!-- CAPTURA -->
+            ${p.payment_screenshot_url
+              ? `<div class="screenshot-wrap" onclick="window._verCaptura('${p.payment_screenshot_url}')">
+                   <img src="${p.payment_screenshot_url}" class="screenshot-thumb" alt="Captura Yape">
+                   <div class="screenshot-overlay">🔍 Ver captura completa</div>
+                 </div>`
+              : `<div class="no-screenshot">📭 Sin captura de pago</div>`}
+
+            <!-- ACCIONES — solo si está pendiente -->
+            ${estado === "uploaded" ? `
+            <div class="pago-actions">
+              <button class="btn-aprobar" onclick="window._aprobarPedidos('${ids}','${p.tel||''}','${p.nombre||''}',${monto})">✅ Aprobar</button>
+              <button class="btn-rechazar" onclick="window._rechazarPedidos('${ids}')">❌ Rechazar</button>
+              <a class="btn-wa-pago" title="Consultar por WhatsApp"
+                href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Vi tu pedido de GruPay en ${p.sector||'tu sector'} por S/${monto.toFixed(1)}. ¿Tienes alguna consulta?`)}"
+                target="_blank">💬</a>
+            </div>` : `
+            <!-- Si ya está resuelto, solo botón WA -->
+            <div style="display:flex;gap:8px;margin-top:8px;">
+              <a href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Te escribo por tu pedido de GruPay (${p.producto_nombre||'productos'}, sector ${p.sector||'—'}).`)}"
+                target="_blank"
+                style="flex:1;padding:10px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
+                border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;
+                text-align:center;text-decoration:none;display:block;">
+                💬 Contactar por WhatsApp
+              </a>
+            </div>`}
+          </div>`;
+        }).join("")}`;
 }
+
+window._filtrar = (estado) => {
+  filtroEstado = estado;
+  renderPagos();
+};
 
 window._aprobarPedidos = async (idsStr, tel, nombre, monto) => {
   const ids = idsStr.split(",");
@@ -295,14 +400,88 @@ window._crearGrupo = async () => {
   }
 };
 
+// ── TAB SOPORTE ───────────────────────────────────────────────────────────────
+function renderSoporte() {
+  if (activeTab !== "soporte") return;
+  const container = document.getElementById("tab-content");
+  const pend  = soportes.filter(s => s.estado === "pendiente");
+  const atend = soportes.filter(s => s.estado === "atendido");
+
+  if (!soportes.length) {
+    container.innerHTML = `<div class="empty-card"><div class="empty-icon">🙌</div><div class="empty-title">Sin consultas</div><div class="empty-sub">Nadie ha pedido soporte aún</div></div>`;
+    return;
+  }
+
+  const renderGrupo = (lista, titulo, color) => {
+    if (!lista.length) return "";
+    return `
+      <div style="font-size:10px;font-weight:900;color:${color};text-transform:uppercase;
+        letter-spacing:2px;font-family:'DM Mono',monospace;margin:14px 0 8px;">${titulo} (${lista.length})</div>
+      ${lista.map(s => {
+        const fecha = s.fecha?.toDate?.() ? formatFecha(s.fecha.toDate()) : "—";
+        const waNum = `51${(s.tel||"").replace(/\D/g,"")}`;
+        const canal = s.canal === "whatsapp_karla" ? "🤖 Karla" : "💬 WA Directo";
+        const esPend = s.estado === "pendiente";
+        return `<div style="background:#fff;border:2px solid ${esPend?"#fde68a":"#e2e8f0"};
+          border-left:4px solid ${esPend?"#d97706":"#22c55e"};
+          border-radius:14px;padding:14px;margin-bottom:10px;
+          box-shadow:0 2px 8px rgba(0,0,0,.04);">
+
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+            <div>
+              <div style="font-size:15px;font-weight:800;">${s.nombre||"Visitante"}</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${canal} · ${fecha}</div>
+              ${s.sector ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">📍 ${s.sector}</div>` : ""}
+              ${s.consulta ? `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12px;color:#334155;font-style:italic;">"${s.consulta}"</div>` : ""}
+            </div>
+            <span style="background:${esPend?"#fef9c3":"#dcfce7"};color:${esPend?"#854d0e":"#15803d"};
+              border:1.5px solid ${esPend?"#fde68a":"#bbf7d0"};font-size:9px;font-weight:800;
+              padding:3px 8px;border-radius:99px;white-space:nowrap;font-family:'DM Mono',monospace;">
+              ${esPend?"⏳ Pendiente":"✅ Atendido"}
+            </span>
+          </div>
+
+          <div style="display:flex;gap:8px;">
+            ${s.tel ? `
+              <a href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${s.nombre||''}! 👋 Vi que necesitas ayuda con GruPay. ¿En qué te puedo ayudar?`)}"
+                target="_blank"
+                style="flex:1;padding:10px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
+                border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;
+                text-align:center;text-decoration:none;display:block;">
+                💬 WhatsApp ${s.tel}
+              </a>` : `<div style="flex:1;padding:10px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:10px;font-size:12px;color:var(--muted);text-align:center;">Sin número registrado</div>`}
+            ${esPend ? `
+              <button onclick="window._marcarAtendido('${s._id}')"
+                style="padding:10px 14px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
+                border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">
+                ✅ Marcar atendido
+              </button>` : ""}
+          </div>
+        </div>`;
+      }).join("")}`;
+  };
+
+  container.innerHTML =
+    renderGrupo(pend,  "⏳ Pendientes", "#d97706") +
+    renderGrupo(atend, "✅ Atendidos",  "#16a34a");
+}
+
+window._marcarAtendido = async (id) => {
+  await updateDoc(doc(db, "grupay_soporte", id), {
+    estado: "atendido", atendido_at: serverTimestamp()
+  });
+  showToast("✅ Consulta marcada como atendida");
+};
+
 // ── TABS ──────────────────────────────────────────────────────────────────────
 window._setTab = (tab) => {
   activeTab = tab;
   document.querySelectorAll(".tab-btn").forEach(b =>
     b.classList.toggle("tab-active", b.dataset.tab === tab));
-  if (tab==="pagos")  renderPagos();
-  if (tab==="grupos") renderGrupos();
-  if (tab==="nuevo")  renderNuevoGrupo();
+  if (tab==="pagos")   renderPagos();
+  if (tab==="grupos")  renderGrupos();
+  if (tab==="nuevo")   renderNuevoGrupo();
+  if (tab==="soporte") renderSoporte();
 };
 
 window._verCaptura = (url) => {
@@ -311,8 +490,8 @@ window._verCaptura = (url) => {
 };
 window._cerrarLightbox = () => document.getElementById("lightbox").classList.remove("on");
 
-function formatHora(d) {
-  return d.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"});
+function formatFecha(d) {
+  return d.toLocaleString("es-PE",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
 }
 let _tt;
 function showToast(msg,dur=3000){
@@ -472,10 +651,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',
     </div>
   </div>
   <div class="stats-bar">
-    <div class="stat-item"><div class="stat-num amber" id="stat-pendientes">0</div><div class="stat-lbl">Pagos</div></div>
-    <div class="stat-item"><div class="stat-num amber" id="stat-grupos-abiertos">0</div><div class="stat-lbl">Abiertos</div></div>
-    <div class="stat-item"><div class="stat-num green" id="stat-grupos-activos">0</div><div class="stat-lbl">Activos</div></div>
-    <div class="stat-item"><div class="stat-num" id="stat-total-grupos">0</div><div class="stat-lbl">Total</div></div>
+    <div class="stat-item"><div class="stat-num amber" id="stat-pendientes">0</div><div class="stat-lbl">Pagos pend.</div></div>
+    <div class="stat-item"><div class="stat-num green" id="stat-verificados">0</div><div class="stat-lbl">Aprobados</div></div>
+    <div class="stat-item"><div class="stat-num amber" id="stat-soporte">0</div><div class="stat-lbl">Soporte</div></div>
+    <div class="stat-item"><div class="stat-num" id="stat-total-grupos">0</div><div class="stat-lbl">Productos</div></div>
   </div>
   <div class="scroll-area" id="tab-content">
     <div class="empty-card"><div class="empty-icon">⏳</div><div class="empty-title">Cargando...</div></div>
