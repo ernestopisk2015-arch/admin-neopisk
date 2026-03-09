@@ -29,207 +29,139 @@ const db  = getFirestore(app);
 let grupos   = {};
 let pedidos  = [];
 let soportes = [];
-let activeTab = "pagos";
-let filtroEstado = "todos"; // todos | uploaded | verified | rejected
+let activeTab    = "pagos";
+let filtroEstado = "todos";
 
 document.addEventListener("DOMContentLoaded", initListeners);
 
 function initListeners() {
-  // Grupos (productos)
-  onSnapshot(
-    query(collection(db, "grupay_groups"), orderBy("created_at","desc")),
-    snap => {
-      snap.docChanges().forEach(ch => {
-        if (ch.type === "removed") delete grupos[ch.doc.id];
-        else grupos[ch.doc.id] = { id: ch.doc.id, ...ch.doc.data() };
-      });
-      renderGrupos(); updateStats();
-    }
-  );
-
-  // PEDIDOS — lee grupay_pedidos directamente
-  onSnapshot(
-    query(collection(db, "grupay_pedidos"), orderBy("fecha","desc")),
-    snap => {
-      pedidos = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-      renderPagos(); updateStats();
-    }
-  );
-
-  // SOPORTE — lee grupay_soporte en tiempo real
-  onSnapshot(
-    query(collection(db, "grupay_soporte"), orderBy("fecha","desc")),
-    snap => {
-      soportes = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-      renderSoporte(); updateStats();
-    }
-  );
+  onSnapshot(query(collection(db,"grupay_groups"), orderBy("created_at","desc")), snap => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type==="removed") delete grupos[ch.doc.id];
+      else grupos[ch.doc.id] = { id:ch.doc.id, ...ch.doc.data() };
+    });
+    if (activeTab==="grupos") renderGrupos();
+    updateStats();
+  });
+  onSnapshot(query(collection(db,"grupay_pedidos"), orderBy("fecha","desc")), snap => {
+    pedidos = snap.docs.map(d => ({ _id:d.id, ...d.data() }));
+    if (activeTab==="pagos") renderPagos();
+    updateStats();
+  });
+  onSnapshot(query(collection(db,"grupay_soporte"), orderBy("fecha","desc")), snap => {
+    soportes = snap.docs.map(d => ({ _id:d.id, ...d.data() }));
+    if (activeTab==="soporte") renderSoporte();
+    updateStats();
+  });
 }
 
 function updateStats() {
-  const pend   = pedidos.filter(p => p.payment_status === "uploaded");
-  const verif  = pedidos.filter(p => p.payment_status === "verified");
-  const spend  = soportes.filter(s => s.estado === "pendiente");
-  const lista  = Object.values(grupos);
-  document.getElementById("stat-pendientes").textContent      = pend.length;
-  document.getElementById("stat-verificados").textContent     = verif.length;
-  document.getElementById("stat-soporte").textContent         = spend.length;
-  document.getElementById("stat-total-grupos").textContent    = lista.length;
-  const badge = document.getElementById("tab-badge-pagos");
-  badge.textContent = pend.length;
-  badge.style.display = pend.length > 0 ? "flex" : "none";
-  const badgeS = document.getElementById("tab-badge-soporte");
-  badgeS.textContent = spend.length;
-  badgeS.style.display = spend.length > 0 ? "flex" : "none";
+  const pend  = pedidos.filter(p => p.payment_status==="uploaded");
+  const verif = pedidos.filter(p => p.payment_status==="verified");
+  const spend = soportes.filter(s => s.estado==="pendiente");
+  document.getElementById("stat-pendientes").textContent   = pend.length;
+  document.getElementById("stat-verificados").textContent  = verif.length;
+  document.getElementById("stat-soporte").textContent      = spend.length;
+  document.getElementById("stat-total-grupos").textContent = Object.values(grupos).length;
+  const bp = document.getElementById("tab-badge-pagos");
+  bp.textContent = pend.length; bp.style.display = pend.length>0?"flex":"none";
+  const bs = document.getElementById("tab-badge-soporte");
+  bs.textContent = spend.length; bs.style.display = spend.length>0?"flex":"none";
 }
 
 // ── TAB PAGOS ─────────────────────────────────────────────────────────────────
 function renderPagos() {
-  if (activeTab !== "pagos") return;
   const container = document.getElementById("tab-content");
-
-  // Filtrar según estado seleccionado
-  let lista = pedidos;
-  if (filtroEstado !== "todos") lista = pedidos.filter(p => p.payment_status === filtroEstado);
-
-  // Agrupar por carrito (mismo tel + monto + sector, pedidos con carrito:true del mismo momento)
+  let lista = filtroEstado==="todos" ? pedidos : pedidos.filter(p => p.payment_status===filtroEstado);
   const agrupados = {};
   lista.forEach(p => {
     const key = p.carrito ? `${p.tel}_${p.monto}_${p.sector}` : p._id;
     if (!agrupados[key]) agrupados[key] = [];
     agrupados[key].push(p);
   });
-
-  const totalPend = pedidos.filter(p => p.payment_status === "uploaded").length;
-  const totalVerif = pedidos.filter(p => p.payment_status === "verified").length;
-  const totalRech = pedidos.filter(p => p.payment_status === "rejected").length;
-
+  const totalPend  = pedidos.filter(p => p.payment_status==="uploaded").length;
+  const totalVerif = pedidos.filter(p => p.payment_status==="verified").length;
+  const totalRech  = pedidos.filter(p => p.payment_status==="rejected").length;
   const SC = { uploaded:"#d97706", verified:"#16a34a", rejected:"#dc2626" };
   const SL = { uploaded:"⏳ Pendiente", verified:"✅ Aprobado", rejected:"❌ Rechazado" };
 
   container.innerHTML = `
-    <!-- FILTROS -->
     <div style="display:flex;gap:6px;margin-bottom:14px;overflow-x:auto;padding-bottom:2px;">
-      ${[
-        ["todos","🗂 Todos", pedidos.length, "#1e293b"],
-        ["uploaded","⏳ Pendientes", totalPend, "#d97706"],
-        ["verified","✅ Aprobados", totalVerif, "#16a34a"],
-        ["rejected","❌ Rechazados", totalRech, "#dc2626"]
-      ].map(([val,lbl,cnt,col])=>`
+      ${[["todos","🗂 Todos",pedidos.length,"#1e293b"],["uploaded","⏳ Pendientes",totalPend,"#d97706"],
+         ["verified","✅ Aprobados",totalVerif,"#16a34a"],["rejected","❌ Rechazados",totalRech,"#dc2626"]]
+        .map(([val,lbl,cnt,col])=>`
         <button onclick="window._filtrar('${val}')"
           style="flex-shrink:0;padding:7px 14px;border-radius:99px;border:2px solid ${filtroEstado===val?col:'#e2e8f0'};
           background:${filtroEstado===val?col:'#fff'};color:${filtroEstado===val?'#fff':col==='#1e293b'?'#64748b':col};
           font-family:'Syne',sans-serif;font-weight:800;font-size:11px;cursor:pointer;white-space:nowrap;
           box-shadow:${filtroEstado===val?`0 2px 8px ${col}44`:'none'};transition:all .2s;">
-          ${lbl} <span style="background:${filtroEstado===val?'rgba(255,255,255,.3)':'#f1f5f9'};color:${filtroEstado===val?'#fff':'#64748b'};font-size:10px;font-weight:900;padding:1px 6px;border-radius:99px;margin-left:2px;">${cnt}</span>
+          ${lbl} <span style="background:${filtroEstado===val?'rgba(255,255,255,.3)':'#f1f5f9'};
+            color:${filtroEstado===val?'#fff':'#64748b'};font-size:10px;font-weight:900;
+            padding:1px 6px;border-radius:99px;margin-left:2px;">${cnt}</span>
         </button>`).join("")}
     </div>
-
     ${!Object.keys(agrupados).length
-      ? `<div class="empty-card">
-           <div class="empty-icon">${filtroEstado==="uploaded"?"🎉":filtroEstado==="verified"?"📭":filtroEstado==="rejected"?"📭":"📭"}</div>
-           <div class="empty-title">${filtroEstado==="uploaded"?"¡Sin pagos pendientes!":filtroEstado==="verified"?"Aún no hay pagos aprobados":filtroEstado==="rejected"?"Sin rechazados":"Sin pedidos aún"}</div>
-           ${filtroEstado==="uploaded"?`<div style="font-size:12px;color:#64748b;margin-top:4px;">Todos los pagos están al día 👍</div>`:""}
-         </div>`
+      ? `<div class="empty-card"><div class="empty-icon">${filtroEstado==="uploaded"?"🎉":"📭"}</div>
+         <div class="empty-title">${filtroEstado==="uploaded"?"¡Sin pagos pendientes!":"Sin pedidos"}</div>
+         ${filtroEstado==="uploaded"?`<div class="empty-sub">Todos los pagos están al día 👍</div>`:""}</div>`
       : Object.values(agrupados).map(grupo => {
-          const p      = grupo[0];
-          const monto  = parseFloat(p.monto) || 0;
-          const fecha  = p.fecha?.toDate?.() ? formatFecha(p.fecha.toDate()) : "—";
-          const ids    = grupo.map(x => x._id).join(",");
+          const p = grupo[0];
+          const monto = parseFloat(p.monto)||0;
+          const fecha = p.fecha?.toDate?.() ? formatFecha(p.fecha.toDate()) : "—";
+          const ids   = grupo.map(x=>x._id).join(",");
           const esCarrito = grupo.length > 1;
-          const productos = grupo.map(x => `<span style="background:#f1f5f9;border-radius:6px;padding:2px 6px;font-size:10px;">${x.producto_emoji||"📦"} ${x.producto_nombre}</span>`).join(" ");
+          const productos = grupo.map(x=>`<span style="background:#f1f5f9;border-radius:6px;padding:2px 6px;font-size:10px;">${x.producto_emoji||"📦"} ${x.producto_nombre}</span>`).join(" ");
           const estado = p.payment_status;
-          const col    = SC[estado] || "#9ca3af";
+          const col    = SC[estado]||"#9ca3af";
           const waNum  = `51${(p.tel||"").replace(/\D/g,"")}`;
-
+          const delivText = p.delivery_costo>0
+            ? `<span style="background:#fef9c3;color:#854d0e;border-radius:6px;padding:2px 6px;font-size:10px;">🚚 Delivery S/${parseFloat(p.delivery_costo).toFixed(1)}</span>`
+            : p.delivery_gratis
+              ? `<span style="background:#dcfce7;color:#15803d;border-radius:6px;padding:2px 6px;font-size:10px;">🚚 Delivery GRATIS</span>`
+              : "";
           return `<div class="pago-card" style="border-left:4px solid ${col};">
-
-            <!-- ESTADO BADGE -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-              <span style="background:${col}18;color:${col};border:1.5px solid ${col}44;
-                font-size:10px;font-weight:800;padding:3px 10px;border-radius:99px;font-family:'DM Mono',monospace;">
-                ${SL[estado]||estado}
-              </span>
+              <span style="background:${col}18;color:${col};border:1.5px solid ${col}44;font-size:10px;font-weight:800;padding:3px 10px;border-radius:99px;font-family:'DM Mono',monospace;">${SL[estado]||estado}</span>
               <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${fecha}</span>
             </div>
-
-            <!-- CLIENTE -->
             <div class="pago-header">
-              <div class="pago-avatar" style="background:${col}18;border-color:${col}44;">
-                ${esCarrito ? "🛒" : (p.producto_emoji||"📦")}
-              </div>
+              <div class="pago-avatar" style="background:${col}18;border-color:${col}44;">${esCarrito?"🛒":(p.producto_emoji||"📦")}</div>
               <div class="pago-info">
                 <div class="pago-nombre">
                   ${p.nombre||"Cliente"}
                   ${p.es_lider?`<span style="background:#7c3aed;color:#fff;font-size:9px;font-weight:800;padding:2px 7px;border-radius:99px;margin-left:6px;">👑 LÍDER</span>`:""}
                   ${p.sin_descuento?`<span style="background:#fef3c7;color:#d97706;font-size:9px;font-weight:800;padding:2px 7px;border-radius:99px;margin-left:4px;">⚠ SIN DESC.</span>`:""}
-                  ${p.distancia_lider>1000?`<span style="background:#fee2e2;color:#dc2626;font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;margin-left:4px;">📍 ${(p.distancia_lider/1000).toFixed(1)}km del líder</span>`:(p.distancia_lider>0?`<span style="background:#dcfce7;color:#16a34a;font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;margin-left:4px;">📍 ${p.distancia_lider}m</span>`:"")}
                 </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0;">
-                  <a href="https://wa.me/${waNum}" target="_blank"
-                    style="background:#dcfce7;color:#15803d;border:1.5px solid #bbf7d0;border-radius:8px;
-                    padding:3px 10px;font-size:11px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;">
-                    💬 ${p.tel||"—"}
-                  </a>
-                  <span style="background:#f1f5f9;color:#475569;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">
-                    📍 ${p.sector||"—"}
-                  </span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0;">
+                  <a href="https://wa.me/${waNum}" target="_blank" style="background:#dcfce7;color:#15803d;border:1.5px solid #bbf7d0;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;">💬 ${p.tel||"—"}</a>
+                  <span style="background:#f1f5f9;color:#475569;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">📍 ${p.sector||"—"}</span>
+                  ${delivText}
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">${productos}</div>
               </div>
               <div class="pago-monto" style="color:${col};">S/${monto.toFixed(1)}</div>
             </div>
-
-            <!-- DATOS DE ENTREGA -->
-            <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:12px;display:flex;flex-direction:column;gap:6px;">
-              <div style="font-size:9px;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:2px;font-family:'DM Mono',monospace;">Datos de entrega</div>
-              <div style="display:flex;align-items:flex-start;gap:6px;">
-                <span style="font-size:13px;flex-shrink:0;">📍</span>
-                <div>
-                  <div style="font-size:10px;color:#94a3b8;font-weight:600;">Dirección</div>
-                  <div style="font-size:12px;font-weight:700;color:${p.direccion?"#1e293b":"#ef4444"};">${p.direccion||"⚠ No registrada"}</div>
-                </div>
+            <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:12px;">
+              <div style="font-size:9px;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-family:'DM Mono',monospace;">Datos de entrega</div>
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                <div style="display:flex;gap:6px;"><span>📍</span><div><div style="font-size:9px;color:#94a3b8;font-weight:600;">Dirección</div><div style="font-size:12px;font-weight:700;color:${p.direccion?"#1e293b":"#ef4444"};">${p.direccion||"⚠ No registrada"}</div></div></div>
+                ${p.referencia?`<div style="display:flex;gap:6px;"><span>🚪</span><div><div style="font-size:9px;color:#94a3b8;font-weight:600;">Referencia</div><div style="font-size:12px;font-weight:700;">${p.referencia}</div></div></div>`:""}
+                ${p.horario?`<div style="display:flex;gap:6px;"><span>🕐</span><div><div style="font-size:9px;color:#94a3b8;font-weight:600;">Horario</div><div style="font-size:12px;font-weight:700;">${p.horario}</div></div></div>`:""}
               </div>
-              ${p.referencia?`<div style="display:flex;align-items:flex-start;gap:6px;">
-                <span style="font-size:13px;flex-shrink:0;">🚪</span>
-                <div>
-                  <div style="font-size:10px;color:#94a3b8;font-weight:600;">Referencia</div>
-                  <div style="font-size:12px;font-weight:700;color:#1e293b;">${p.referencia}</div>
-                </div>
-              </div>`:""}
-              ${p.horario?`<div style="display:flex;align-items:flex-start;gap:6px;">
-                <span style="font-size:13px;flex-shrink:0;">🕐</span>
-                <div>
-                  <div style="font-size:10px;color:#94a3b8;font-weight:600;">Horario preferido</div>
-                  <div style="font-size:12px;font-weight:700;color:#1e293b;">${p.horario}</div>
-                </div>
-              </div>`:""}
             </div>
-
-            <!-- CAPTURA -->
             ${p.payment_screenshot_url
-              ? `<div class="screenshot-wrap" onclick="window._verCaptura('${p.payment_screenshot_url}')">
-                   <img src="${p.payment_screenshot_url}" class="screenshot-thumb" alt="Captura Yape">
-                   <div class="screenshot-overlay">🔍 Ver captura completa</div>
-                 </div>`
+              ? `<div class="screenshot-wrap" onclick="window._verCaptura('${p.payment_screenshot_url}')"><img src="${p.payment_screenshot_url}" class="screenshot-thumb" alt="Captura"><div class="screenshot-overlay">🔍 Ver completa</div></div>`
               : `<div class="no-screenshot">📭 Sin captura de pago</div>`}
-
-            <!-- ACCIONES — solo si está pendiente -->
-            ${estado === "uploaded" ? `
+            ${estado==="uploaded" ? `
             <div class="pago-actions">
               <button class="btn-aprobar" onclick="window._aprobarPedidos('${ids}','${p.tel||''}','${p.nombre||''}',${monto})">✅ Aprobar</button>
               <button class="btn-rechazar" onclick="window._rechazarPedidos('${ids}')">❌ Rechazar</button>
-              <a class="btn-wa-pago" title="Consultar por WhatsApp"
-                href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Vi tu pedido de GruPay en ${p.sector||'tu sector'} por S/${monto.toFixed(1)}. ¿Tienes alguna consulta?`)}"
-                target="_blank">💬</a>
+              <a class="btn-wa-pago" href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Vi tu pedido de GruPay por S/${monto.toFixed(1)}. ¿Tienes alguna consulta?`)}" target="_blank">💬</a>
             </div>` : `
-            <!-- Si ya está resuelto, solo botón WA -->
-            <div style="display:flex;gap:8px;margin-top:8px;">
-              <a href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Te escribo por tu pedido de GruPay (${p.producto_nombre||'productos'}, sector ${p.sector||'—'}).`)}"
-                target="_blank"
-                style="flex:1;padding:10px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
-                border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;
-                text-align:center;text-decoration:none;display:block;">
+            <div style="margin-top:8px;">
+              <a href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Te escribo por tu pedido de GruPay.`)}" target="_blank"
+                style="display:block;padding:10px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
+                border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;text-align:center;text-decoration:none;">
                 💬 Contactar por WhatsApp
               </a>
             </div>`}
@@ -237,347 +169,301 @@ function renderPagos() {
         }).join("")}`;
 }
 
-window._filtrar = (estado) => {
-  filtroEstado = estado;
-  renderPagos();
-};
+window._filtrar = (estado) => { filtroEstado = estado; renderPagos(); };
 
 window._aprobarPedidos = async (idsStr, tel, nombre, monto) => {
   const ids = idsStr.split(",");
-  // Actualizar memoria local INMEDIATAMENTE para que el re-render no pierda el card
-  ids.forEach(id => {
-    const card = document.getElementById(`pago-${id}`);
-    if (card) { card.style.opacity="0.4"; card.style.pointerEvents="none"; }
-    const p = pedidos.find(x => x._id === id);
-    if (p) p.payment_status = "verified";
-  });
+  // Deshabilitar botones sin ocultar la card — el onSnapshot la actualizará solo
+  document.querySelectorAll(".btn-aprobar,.btn-rechazar").forEach(b => { b.disabled=true; b.style.opacity="0.5"; });
   try {
     for (const id of ids) {
-      await updateDoc(doc(db, "grupay_pedidos", id), {
-        payment_status: "verified", verified_at: serverTimestamp()
-      });
-      const pedido = pedidos.find(p => p._id === id);
+      await updateDoc(doc(db,"grupay_pedidos",id), { payment_status:"verified", verified_at:serverTimestamp() });
+      const pedido = pedidos.find(p => p._id===id);
       if (pedido?.sector_id && pedido?.producto_id) {
         try {
-          const mSnap = await getDocs(
-            query(collection(db, "grupay_groups", pedido.producto_id, "sectors", pedido.sector_id, "members"),
-              where("tel","==", pedido.tel))
-          );
-          for (const m of mSnap.docs) {
-            await updateDoc(m.ref, { payment_status:"verified", verified_at:serverTimestamp() });
-          }
-        } catch(e) { console.warn("member update:", e.message); }
+          const mSnap = await getDocs(query(
+            collection(db,"grupay_groups",pedido.producto_id,"sectors",pedido.sector_id,"members"),
+            where("tel","==",pedido.tel)));
+          for (const m of mSnap.docs) await updateDoc(m.ref, { payment_status:"verified", verified_at:serverTimestamp() });
+        } catch(e) { console.warn("member:", e.message); }
       }
     }
-    // Abrir WhatsApp para notificar al cliente
     const waNum = `51${tel.replace(/\D/g,"")}`;
-    const msg = encodeURIComponent(`✅ *¡Pago aprobado!* 🎉\n\nHola ${nombre}! Tu pago de S/${parseFloat(monto).toFixed(1)} en GruPay fue verificado.\n\n📦 Pronto coordinaremos la entrega contigo.\n\n¡Gracias por confiar en GruPay! 🛒`);
-    window.open(`https://wa.me/${waNum}?text=${msg}`, "_blank");
-    // Volver a filtro pendientes (el aprobado desaparece de aquí, que es lo correcto)
-    filtroEstado = "uploaded";
-    showToast("✅ Pago aprobado — WA de confirmación abierto");
-    renderPagos();
-  } catch(e) {
-    showToast("❌ Error: " + e.message);
-    renderPagos();
-  }
+    const msg = encodeURIComponent(`✅ ¡Hola ${nombre}! Tu pago de S/${parseFloat(monto).toFixed(1)} en GruPay fue *aprobado*. Pronto coordinaremos la entrega. 🛒`);
+    if (confirm("¿Enviar confirmación al cliente por WhatsApp?")) window.open(`https://wa.me/${waNum}?text=${msg}`,"_blank");
+    showToast("✅ Pago aprobado");
+  } catch(e) { showToast("❌ Error: "+e.message); }
 };
 
 window._rechazarPedidos = async (idsStr) => {
   if (!confirm("¿Rechazar este pago?")) return;
-  const ids = idsStr.split(",");
-  // Actualizar memoria local inmediato
-  ids.forEach(id => { const p = pedidos.find(x=>x._id===id); if(p) p.payment_status="rejected"; });
-  for (const id of ids) {
-    await updateDoc(doc(db, "grupay_pedidos", id), { payment_status: "rejected" });
-  }
-  filtroEstado = "uploaded";
+  for (const id of idsStr.split(",")) await updateDoc(doc(db,"grupay_pedidos",id), { payment_status:"rejected" });
   showToast("🗑 Pago rechazado");
-  renderPagos();
 };
 
-// ── TAB GRUPOS ────────────────────────────────────────────────────────────────
+// ── TAB GRUPOS ─────────────────────────────────────────────────────────────────
 function renderGrupos() {
-  if (activeTab !== "grupos") return;
-  const lista = Object.values(grupos);
   const container = document.getElementById("tab-content");
+  const lista = Object.values(grupos);
   if (!lista.length) {
     container.innerHTML = `<div class="empty-card"><div class="empty-icon">📦</div><div class="empty-title">Sin productos</div><div class="empty-sub">Crea el primero desde ➕</div></div>`;
     return;
   }
-
-  const SC = { open:"#f59e0b", active:"#22c55e", paused:"#6366f1", cancelled:"#ef4444", completed:"#6366f1" };
-  const SL = { open:"Abierto", active:"Activo", paused:"⏸ Pausado", cancelled:"Cancelado", completed:"Completado" };
-  const ingresosTotal = pedidos.filter(p=>p.payment_status==="verified").reduce((s,p)=>s+(parseFloat(p.monto)||0),0);
-
-  container.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
-      <div style="background:#fff;border:2px solid var(--border);border-radius:12px;padding:12px;text-align:center;">
-        <div style="font-size:20px;font-weight:900;">${lista.length}</div>
-        <div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.5px;margin-top:3px;">Productos</div>
+  const activos  = lista.filter(g => g.status!=="paused" && g.status!=="cancelled");
+  const pausados = lista.filter(g => g.status==="paused" || g.status==="cancelled");
+  const SC = { open:"#f59e0b", active:"#22c55e", paused:"#64748b", cancelled:"#ef4444", completed:"#6366f1" };
+  const SL = { open:"Abierto", active:"Activo ✅", paused:"⏸ Pausado", cancelled:"Cancelado", completed:"Completado" };
+  const renderLista = (arr) => arr.map(g => {
+    const col = SC[g.status]||"#9ca3af";
+    const pend  = pedidos.filter(p => p.producto_id===g.id && p.payment_status==="uploaded").length;
+    const verif = pedidos.filter(p => p.producto_id===g.id && p.payment_status==="verified").length;
+    const grey  = g.status==="paused"||g.status==="cancelled";
+    return `<div class="grupo-card" onclick="window._verGrupo('${g.id}')">
+      <div class="grupo-left">
+        <div class="grupo-emoji" style="${grey?'filter:grayscale(1);opacity:.5':''}">${g.emoji||"📦"}</div>
+        <div>
+          <div class="grupo-name" style="${grey?'color:var(--muted)':''}">${g.product_name}</div>
+          <div class="grupo-zone">📍 ${g.zone||"—"} · ${g.unit||"kg"}</div>
+          <div style="display:flex;gap:6px;margin-top:4px;">
+            ${pend>0?`<span style="background:#fef9c3;color:#854d0e;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">⏳ ${pend} pend.</span>`:""}
+            ${verif>0?`<span style="background:#dcfce7;color:#15803d;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">✅ ${verif} ok</span>`:""}
+          </div>
+        </div>
       </div>
-      <div style="background:#fff;border:2px solid var(--border);border-radius:12px;padding:12px;text-align:center;">
-        <div style="font-size:20px;font-weight:900;color:var(--green);">S/${ingresosTotal.toFixed(0)}</div>
-        <div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.5px;margin-top:3px;">Ingresos aprobados</div>
+      <div class="grupo-right">
+        <div class="grupo-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[g.status]||g.status}</div>
+        <div class="grupo-price" style="${grey?'color:var(--muted)':''}">S/${(g.price_per_unit||0).toFixed(2)}</div>
+        <div class="grupo-arrow">›</div>
       </div>
-    </div>
-    ${lista.map(g => {
-      const col  = SC[g.status]||"#9ca3af";
-      const pend = pedidos.filter(p=>p.producto_id===g.id&&p.payment_status==="uploaded").length;
-      const verif= pedidos.filter(p=>p.producto_id===g.id&&p.payment_status==="verified").length;
-      const isPaused = g.status === "paused";
-      const isCancelled = g.status === "cancelled";
-      return `
-      <div class="grupo-card" style="${isPaused?'opacity:.6':''}">
-        <!-- INFO (click → detalle) -->
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;cursor:pointer;" onclick="window._verGrupo('${g.id}')">
-          <div class="grupo-emoji" style="opacity:${isPaused?.5:1};">${g.emoji||"📦"}</div>
-          <div style="flex:1;min-width:0;">
-            <div class="grupo-name">${g.product_name}</div>
-            <div class="grupo-zone">📍 ${g.zone||"—"} · ${g.unit||"kg"}</div>
-            <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
-              <span class="grupo-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[g.status]||g.status}</span>
-              ${pend>0?`<span style="background:#fef9c3;color:#854d0e;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">⏳ ${pend} pend.</span>`:""}
-              ${verif>0?`<span style="background:#dcfce7;color:#15803d;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">✅ ${verif} ok</span>`:""}
-            </div>
-          </div>
-          <div style="text-align:right;flex-shrink:0;">
-            <div class="grupo-price">S/${(g.price_per_unit||0).toFixed(1)}</div>
-            <div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;">/${g.unit||"kg"}</div>
-          </div>
-        </div>
-
-        <!-- BOTONES ACCIÓN -->
-        <div style="display:flex;gap:6px;border-top:1.5px solid var(--border);padding-top:10px;">
-          <button onclick="window._editarPrecio('${g.id}')"
-            style="flex:1;padding:8px 4px;background:#f1f5f9;color:#334155;border:1.5px solid #e2e8f0;
-            border-radius:9px;font-family:'Syne',sans-serif;font-weight:800;font-size:11px;cursor:pointer;">
-            ✏️ Precio
-          </button>
-          ${!isCancelled?`
-          <button onclick="window._togglePausa('${g.id}','${g.status}')"
-            style="flex:1;padding:8px 4px;
-            background:${isPaused?'#f0fdf4':'#f5f3ff'};
-            color:${isPaused?'#15803d':'#6d28d9'};
-            border:1.5px solid ${isPaused?'#bbf7d0':'#ddd6fe'};
-            border-radius:9px;font-family:'Syne',sans-serif;font-weight:800;font-size:11px;cursor:pointer;">
-            ${isPaused?'▶️ Activar':'⏸ Pausar'}
-          </button>`:""}
-          <button onclick="window._verGrupo('${g.id}')"
-            style="flex:1;padding:8px 4px;background:var(--green-l);color:var(--green-d);
-            border:1.5px solid var(--green-b);border-radius:9px;font-family:'Syne',sans-serif;font-weight:800;font-size:11px;cursor:pointer;">
-            📋 Ver
-          </button>
-          ${isCancelled?`
-          <button onclick="window._eliminarGrupo('${g.id}')"
-            style="padding:8px 10px;background:var(--red-l);color:var(--red);
-            border:1.5px solid var(--red-b);border-radius:9px;font-size:13px;cursor:pointer;">🗑</button>`:""}
-        </div>
-
-        <!-- FORM EDITAR PRECIO (oculto) -->
-        <div id="edit-precio-${g.id}" style="display:none;margin-top:10px;border-top:1.5px solid var(--border);padding-top:10px;">
-          <div style="font-size:10px;font-weight:800;color:var(--muted);margin-bottom:6px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.5px;">
-            Precio actual: S/${(g.price_per_unit||0).toFixed(2)} → nuevo precio
-          </div>
-          <div style="display:flex;gap:8px;">
-            <input id="input-precio-${g.id}" type="number" step="0.5" value="${(g.price_per_unit||0).toFixed(2)}"
-              style="flex:1;padding:10px 12px;border:2px solid var(--green);border-radius:9px;
-              font-size:18px;font-family:'Syne',sans-serif;font-weight:900;color:var(--green-d);outline:none;">
-            <button onclick="window._guardarPrecio('${g.id}')"
-              style="padding:10px 16px;background:var(--green);color:#fff;border:none;border-radius:9px;
-              font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;">Guardar</button>
-            <button onclick="document.getElementById('edit-precio-${g.id}').style.display='none'"
-              style="padding:10px;background:#f1f5f9;color:var(--muted);border:1.5px solid #e2e8f0;border-radius:9px;cursor:pointer;font-size:14px;">✕</button>
-          </div>
-        </div>
-      </div>`;
-    }).join("")}`;
+    </div>`;
+  }).join("");
+  container.innerHTML =
+    (activos.length  ? `<div class="section-label" style="margin-bottom:8px;">🟢 Activos (${activos.length})</div>${renderLista(activos)}` : "") +
+    (pausados.length ? `<div class="section-label" style="margin:16px 0 8px;color:var(--muted);">⏸ Pausados (${pausados.length})</div>${renderLista(pausados)}` : "");
 }
 
-window._editarPrecio = (gid) => {
-  // Cerrar todos los otros formularios abiertos
-  document.querySelectorAll('[id^="edit-precio-"]').forEach(el => el.style.display="none");
-  const el = document.getElementById(`edit-precio-${gid}`);
-  if (el) {
-    el.style.display = "block";
-    const inp = document.getElementById(`input-precio-${gid}`);
-    if (inp) { inp.focus(); inp.select(); }
-  }
-};
-
-window._guardarPrecio = async (gid) => {
-  const input = document.getElementById(`input-precio-${gid}`);
-  const nuevo = parseFloat(input?.value);
-  if (isNaN(nuevo) || nuevo <= 0) { showToast("⚠ Precio inválido"); return; }
-  const anterior = grupos[gid]?.price_per_unit || 0;
-  try {
-    await updateDoc(doc(db,"grupay_groups",gid), {price_per_unit: nuevo});
-    document.getElementById(`edit-precio-${gid}`).style.display = "none";
-    showToast(`✅ Precio: S/${anterior.toFixed(1)} → S/${nuevo.toFixed(1)}`);
-  } catch(e) { showToast("❌ Error: "+e.message); }
-};
-
-window._togglePausa = async (gid, statusActual) => {
-  const esPausado = statusActual === "paused";
-  const msg = esPausado
-    ? "¿Activar este producto? Volverá a aparecer en la app de clientes."
-    : "¿Pausar este producto? Se ocultará en la app de clientes.";
-  if (!confirm(msg)) return;
-  try {
-    await updateDoc(doc(db,"grupay_groups",gid), {status: esPausado ? "open" : "paused"});
-    showToast(esPausado ? "▶️ Producto activado" : "⏸ Producto pausado");
-  } catch(e) { showToast("❌ Error: "+e.message); }
-};
-
-window._eliminarGrupo = async (gid) => {
-  if (!confirm("⚠️ ¿Eliminar permanentemente? Esta acción no se puede deshacer.")) return;
-  try {
-    await deleteDoc(doc(db,"grupay_groups",gid));
-    showToast("🗑 Grupo eliminado");
-  } catch(e) { showToast("❌ Error: "+e.message); }
-};
-
-
-
-
 window._verGrupo = (groupId) => {
-  const g = grupos[groupId]; if(!g) return;
+  const g = grupos[groupId]; if (!g) return;
   activeTab = "detalle";
-  const pedidosG = pedidos.filter(p=>p.producto_id===groupId);
-  const SC = {uploaded:"#f59e0b",verified:"#22c55e",rejected:"#ef4444"};
-  const SL = {uploaded:"Pendiente",verified:"Aprobado",rejected:"Rechazado"};
-  const ingresosG = pedidosG.filter(p=>p.payment_status==="verified").reduce((s,p)=>s+(parseFloat(p.monto)||0),0);
+  const pedidosG = pedidos.filter(p => p.producto_id===groupId);
+  const SC = { uploaded:"#f59e0b", verified:"#22c55e", rejected:"#ef4444" };
+  const SL = { uploaded:"Pendiente", verified:"Aprobado", rejected:"Rechazado" };
+  const isPaused = g.status==="paused";
+
   document.getElementById("tab-content").innerHTML = `
     <div class="detalle-header">
-      <button class="btn-back" onclick="window._setTab('grupos')">← Volver</button>
+      <button class="btn-back" onclick="window._setTab('grupos')">← Grupos</button>
       <span class="detalle-title">${g.emoji||"📦"} ${g.product_name}</span>
     </div>
     <div class="detalle-stats-row">
       <div class="d-stat"><div class="d-stat-v">${pedidosG.filter(p=>p.payment_status==="verified").length}</div><div class="d-stat-l">Pagados</div></div>
       <div class="d-stat"><div class="d-stat-v">${pedidosG.filter(p=>p.payment_status==="uploaded").length}</div><div class="d-stat-l">Pendientes</div></div>
-      <div class="d-stat"><div class="d-stat-v">S/${(g.price_per_unit||0).toFixed(1)}</div><div class="d-stat-l">Precio/u</div></div>
-      <div class="d-stat"><div class="d-stat-v">S/${ingresosG.toFixed(0)}</div><div class="d-stat-l">Ingresos</div></div>
+      <div class="d-stat"><div class="d-stat-v">S/${(g.price_per_unit||0).toFixed(2)}</div><div class="d-stat-l">Precio</div></div>
+      <div class="d-stat"><div class="d-stat-v" style="color:${isPaused?'#64748b':'#16a34a'}">${isPaused?"⏸":"🟢"}</div><div class="d-stat-l">Estado</div></div>
     </div>
 
-    <!-- Gestión del producto -->
-    <div style="background:#fff;border:2px solid var(--border);border-radius:14px;padding:14px;margin-bottom:16px;">
-      <div class="section-label" style="margin-bottom:10px;">Gestión del producto</div>
-      <div style="display:flex;gap:8px;margin-bottom:8px;">
-        <button onclick="window._editarPrecio('${groupId}')"
-          style="flex:1;padding:10px 8px;background:var(--green-l);color:var(--green-d);border:2px solid var(--green-b);border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">
-          ✏️ Cambiar precio
-        </button>
-        <button onclick="window._togglePausa('${groupId}','${g.status}')"
-          style="flex:1;padding:10px 8px;background:${g.status==='paused'?'#f0fdf4':'#f5f3ff'};color:${g.status==='paused'?'#15803d':'#6d28d9'};border:2px solid ${g.status==='paused'?'#bbf7d0':'#ddd6fe'};border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">
-          ${g.status==='paused'?'▶️ Activar':'⏸ Pausar'}
+    <!-- ✏️ EDITOR DE PRODUCTO -->
+    <div style="background:#fff;border:2px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-size:11px;font-weight:900;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;font-family:'DM Mono',monospace;">✏️ Editar producto</div>
+        <button onclick="window._guardarProducto('${groupId}')"
+          style="background:linear-gradient(135deg,#14532d,#16a34a);color:#fff;border:none;
+          border-radius:10px;padding:8px 16px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">
+          💾 Guardar cambios
         </button>
       </div>
-      <!-- Form precio inline -->
-      <div id="edit-precio-${groupId}" style="display:none;background:#f0fdf4;border:2px solid var(--green-b);border-radius:10px;padding:12px;margin-bottom:8px;">
-        <div style="font-size:10px;font-weight:800;color:var(--green-d);margin-bottom:8px;font-family:'DM Mono',monospace;">NUEVO PRECIO (S/)</div>
-        <div style="display:flex;gap:8px;">
-          <input id="input-precio-${groupId}" type="number" step="0.5" value="${(g.price_per_unit||0).toFixed(2)}"
-            style="flex:1;padding:10px;border:2px solid var(--green);border-radius:9px;font-size:18px;font-weight:900;font-family:'Syne',sans-serif;color:var(--green-d);outline:none;">
-          <button onclick="window._guardarPrecio('${groupId}')"
-            style="padding:10px 16px;background:var(--green);color:#fff;border:none;border-radius:9px;font-family:'Syne',sans-serif;font-weight:800;cursor:pointer;">Guardar</button>
+      <div style="display:grid;grid-template-columns:56px 1fr;gap:10px;margin-bottom:10px;">
+        <div>
+          <label class="form-label">Emoji</label>
+          <input id="ed-emoji" class="form-input" value="${g.emoji||'📦'}" maxlength="2" style="text-align:center;font-size:20px;padding:8px;margin-bottom:0;">
+        </div>
+        <div>
+          <label class="form-label">Nombre</label>
+          <input id="ed-nombre" class="form-input" value="${g.product_name||''}" style="margin-bottom:0;">
         </div>
       </div>
-      <div style="display:flex;gap:8px;">
-        ${g.status==="open"?`<button onclick="window._forzarActivar('${groupId}')" style="flex:1;padding:10px 8px;background:#fffbeb;color:#d97706;border:2px solid #fde68a;border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">⚡ Activar descuento grupal</button>`:""}
-        ${g.status!=="cancelled"?`<button onclick="window._cancelarGrupo('${groupId}')" style="flex:1;padding:10px 8px;background:var(--red-l);color:var(--red);border:2px solid var(--red-b);border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">❌ Cancelar grupo</button>`:""}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div>
+          <label class="form-label">💰 Precio (S/)</label>
+          <input id="ed-precio" class="form-input" type="number" step="0.50" value="${g.price_per_unit||0}" style="margin-bottom:0;">
+        </div>
+        <div>
+          <label class="form-label">📏 Unidad</label>
+          <input id="ed-unit" class="form-input" value="${g.unit||'kg'}" style="margin-bottom:0;">
+        </div>
       </div>
+      <label class="form-label">📍 Zona</label>
+      <input id="ed-zona" class="form-input" value="${g.zone||''}" style="margin-bottom:0;">
     </div>
 
+    <!-- ACCIONES RÁPIDAS -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px;">
+      ${isPaused
+        ? `<button onclick="window._reactivarGrupo('${groupId}')" style="padding:12px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;">▶️ Reactivar</button>`
+        : `<button onclick="window._pausarGrupo('${groupId}')" style="padding:12px;background:#f8fafc;color:#64748b;border:2px solid #e2e8f0;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;">⏸ Pausar</button>`}
+      <button onclick="window._eliminarGrupo('${groupId}')" style="padding:12px;background:#fef2f2;color:#dc2626;border:2px solid #fecaca;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;">🗑 Eliminar</button>
+    </div>
+
+    <!-- PEDIDOS DEL GRUPO -->
     <div class="section-label">Pedidos (${pedidosG.length})</div>
     ${!pedidosG.length
-      ?'<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px;">Sin pedidos aún</div>'
+      ? '<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px;">Sin pedidos aún</div>'
       : pedidosG.map(p => {
-          const col=SC[p.payment_status]||"#9ca3af";
-          const waNum=`51${(p.tel||"").replace(/\D/g,"")}`;
+          const col = SC[p.payment_status]||"#9ca3af";
+          const waNum = `51${(p.tel||"").replace(/\D/g,"")}`;
           return `<div class="member-row">
-            <div class="member-avatar" style="background:${col}22;color:${col};">${(p.nombre||"?")[0].toUpperCase()}</div>
+            <div class="member-avatar" style="background:${col}22;color:${col}">${(p.nombre||"?")[0].toUpperCase()}</div>
             <div class="member-info">
-              <div class="member-name">${p.nombre||"Cliente"} ${p.es_lider?"👑":""}</div>
-              <div class="member-meta">📱 ${p.tel||"—"} · 📍 ${p.sector||"—"} · S/${parseFloat(p.monto||0).toFixed(1)}</div>
+              <div class="member-name">${p.nombre||"Cliente"}${p.es_lider?`<span style="background:#7c3aed;color:#fff;font-size:8px;font-weight:800;padding:1px 5px;border-radius:4px;margin-left:4px;">LÍDER</span>`:""}</div>
+              <div class="member-meta"><a href="https://wa.me/${waNum}" target="_blank" style="color:var(--green);text-decoration:none;">📱 ${p.tel||"—"}</a> · 📍 ${p.sector||"—"} · S/${parseFloat(p.monto||0).toFixed(1)}</div>
             </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
-              <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[p.payment_status]||p.payment_status}</div>
-              <a href="https://wa.me/${waNum}" target="_blank" style="font-size:11px;color:var(--green);text-decoration:none;font-weight:700;">💬 WA</a>
-            </div>
+            <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[p.payment_status]||p.payment_status}</div>
           </div>`;
         }).join("")}`;
 };
 
-window._forzarActivar = async (gid) => {
-  if (!confirm("¿Activar el descuento grupal manualmente?")) return;
-  await updateDoc(doc(db,"grupay_groups",gid),{status:"active"});
-  showToast("⚡ Grupo activado"); window._setTab("grupos");
-};
-window._cancelarGrupo = async (gid) => {
-  if (!confirm("¿Cancelar este grupo?")) return;
-  await updateDoc(doc(db,"grupay_groups",gid),{status:"cancelled"});
-  showToast("❌ Grupo cancelado"); window._setTab("grupos");
+window._guardarProducto = async (gid) => {
+  const nombre = document.getElementById("ed-nombre").value.trim();
+  const emoji  = document.getElementById("ed-emoji").value.trim()||"📦";
+  const precio = parseFloat(document.getElementById("ed-precio").value);
+  const unit   = document.getElementById("ed-unit").value.trim()||"kg";
+  const zona   = document.getElementById("ed-zona").value.trim();
+  if (!nombre||isNaN(precio)||precio<=0) { showToast("⚠ Nombre y precio son requeridos"); return; }
+  try {
+    await updateDoc(doc(db,"grupay_groups",gid), { product_name:nombre, emoji, price_per_unit:precio, unit, zone:zona, delivery_point:zona });
+    showToast("✅ Producto actualizado");
+  } catch(e) { showToast("❌ Error: "+e.message); }
 };
 
-// ── TAB NUEVO GRUPO ───────────────────────────────────────────────────────────
+window._pausarGrupo = async (gid) => {
+  if (!confirm("¿Pausar este producto? Los clientes no podrán hacer pedidos nuevos.")) return;
+  await updateDoc(doc(db,"grupay_groups",gid), { status:"paused" });
+  showToast("⏸ Producto pausado"); window._setTab("grupos");
+};
+
+window._reactivarGrupo = async (gid) => {
+  await updateDoc(doc(db,"grupay_groups",gid), { status:"open" });
+  showToast("▶️ Producto reactivado"); window._setTab("grupos");
+};
+
+window._eliminarGrupo = async (gid) => {
+  const g = grupos[gid];
+  if (!confirm(`¿Eliminar "${g?.product_name}"?\nEsta acción no se puede deshacer.`)) return;
+  if (!confirm("Confirma: eliminar permanentemente.")) return;
+  try { await deleteDoc(doc(db,"grupay_groups",gid)); showToast("🗑 Eliminado"); window._setTab("grupos"); }
+  catch(e) { showToast("❌ Error: "+e.message); }
+};
+
+// ── TAB NUEVO GRUPO ────────────────────────────────────────────────────────────
 function renderNuevoGrupo() {
   document.getElementById("tab-content").innerHTML = `
     <div class="form-section">
       <div class="form-title">➕ Nuevo Producto</div>
-      <div style="display:grid;grid-template-columns:60px 1fr;gap:10px;margin-bottom:14px;">
-        <div><label class="form-label">Emoji</label><input id="ng-emoji" class="form-input" placeholder="📦" maxlength="2" value="📦" style="text-align:center;font-size:22px;padding:10px;"></div>
-        <div><label class="form-label">Nombre del producto</label><input id="ng-nombre" class="form-input" placeholder="Ej: Queso Fresco 1kg"></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-        <div><label class="form-label">Precio (S/)</label><input id="ng-precio" class="form-input" type="number" placeholder="14.00" step="0.50"></div>
-        <div><label class="form-label">Unidad</label><input id="ng-unit" class="form-input" placeholder="kg" value="kg"></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-        <div><label class="form-label">Mín. personas (10% OFF)</label><input id="ng-min" class="form-input" type="number" value="5" min="2"></div>
-        <div><label class="form-label">Zona de entrega</label><input id="ng-zona" class="form-input" placeholder="Ej: San Borja"></div>
-      </div>
-      <label class="form-label" style="margin-bottom:6px;">¿Aplica descuento grupal del 10%?</label>
-      <div style="display:flex;gap:8px;margin-bottom:16px;">
-        <label style="flex:1;display:flex;align-items:center;gap:8px;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:10px;padding:12px;cursor:pointer;">
-          <input type="radio" name="ng-desc" value="true" checked> <span style="font-weight:800;font-size:13px;color:#15803d;">✅ Sí, 10% OFF</span>
-        </label>
-        <label style="flex:1;display:flex;align-items:center;gap:8px;background:#f8fafc;border:2px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;">
-          <input type="radio" name="ng-desc" value="false"> <span style="font-weight:800;font-size:13px;color:var(--muted);">Precio fijo</span>
-        </label>
-      </div>
-      <!-- Preview -->
-      <div style="background:linear-gradient(135deg,#14532d,#166534);border-radius:14px;padding:14px;color:#fff;margin-bottom:16px;">
-        <div style="font-size:9px;opacity:.6;font-family:'DM Mono',monospace;letter-spacing:1.5px;margin-bottom:8px;">PREVIEW EN APP</div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div style="font-size:34px;" id="prev-emoji">📦</div>
-          <div>
-            <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:900;" id="prev-nombre">Nombre del producto</div>
-            <div style="margin-top:4px;display:flex;align-items:center;gap:8px;">
-              <span style="opacity:.85;font-size:14px;font-weight:800;" id="prev-precio">S/0.00/kg</span>
-              <span id="prev-badge" style="background:rgba(255,255,255,.2);font-size:9px;font-weight:800;padding:2px 8px;border-radius:99px;border:1px solid rgba(255,255,255,.3);">10% OFF grupal</span>
-            </div>
-          </div>
+
+      <!-- FOTO DEL PRODUCTO -->
+      <label class="form-label">📷 Foto del producto</label>
+      <div id="ng-foto-area" onclick="document.getElementById('ng-foto-input').click()"
+        style="border:2.5px dashed var(--border);border-radius:14px;background:#f8fafc;
+        min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+        cursor:pointer;margin-bottom:14px;position:relative;overflow:hidden;transition:border-color .2s;">
+        <div id="ng-foto-placeholder" style="text-align:center;padding:20px;">
+          <div style="font-size:36px;margin-bottom:8px;">📸</div>
+          <div style="font-size:13px;font-weight:800;color:var(--muted);">Toca para subir foto</div>
+          <div style="font-size:11px;color:var(--subtle);margin-top:4px;">JPG, PNG, WEBP · máx 5MB</div>
         </div>
+        <img id="ng-foto-preview" src="" alt=""
+          style="display:none;width:100%;height:160px;object-fit:cover;border-radius:11px;">
+        <div id="ng-foto-badge" style="display:none;position:absolute;bottom:8px;right:8px;
+          background:var(--green);color:#fff;font-size:10px;font-weight:800;padding:3px 10px;
+          border-radius:99px;font-family:'DM Mono',monospace;">✅ FOTO LISTA</div>
       </div>
+      <input id="ng-foto-input" type="file" accept="image/*" style="display:none"
+        onchange="window._ngFotoSeleccionada(this)">
+      <div id="ng-foto-progreso" style="display:none;margin-bottom:10px;">
+        <div style="background:#e2e8f0;border-radius:99px;height:6px;overflow:hidden;">
+          <div id="ng-foto-barra" style="height:100%;background:var(--green);width:0%;transition:width .3s;border-radius:99px;"></div>
+        </div>
+        <div id="ng-foto-status" style="font-size:11px;color:var(--muted);margin-top:4px;font-family:'DM Mono',monospace;">Subiendo...</div>
+      </div>
+
+      <!-- DATOS BÁSICOS -->
+      <div style="display:grid;grid-template-columns:64px 1fr;gap:10px;margin-bottom:14px;">
+        <div><label class="form-label">Emoji</label><input id="ng-emoji" class="form-input" placeholder="📦" maxlength="2" value="📦" style="text-align:center;font-size:20px;padding:8px;margin-bottom:0;"></div>
+        <div><label class="form-label">Nombre del producto</label><input id="ng-nombre" class="form-input" placeholder="Queso Fresco 1kg" style="margin-bottom:0;"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div><label class="form-label">💰 Precio (S/)</label><input id="ng-precio" class="form-input" type="number" placeholder="14.00" step="0.50" style="margin-bottom:0;"></div>
+        <div><label class="form-label">📏 Unidad</label><input id="ng-unit" class="form-input" placeholder="kg" value="kg" style="margin-bottom:0;"></div>
+      </div>
+      <label class="form-label">👥 Mínimo de personas</label>
+      <input id="ng-min" class="form-input" type="number" value="5" min="2">
+      <label class="form-label">📍 Zona de entrega</label>
+      <input id="ng-zona" class="form-input" placeholder="Lima Este, San Borja...">
       <button class="btn-crear-grupo" onclick="window._crearGrupo()">🚀 Crear Producto</button>
     </div>`;
-
-  const up = () => {
-    const e = document.getElementById("ng-emoji")?.value||"📦";
-    const n = document.getElementById("ng-nombre")?.value||"Nombre del producto";
-    const p = parseFloat(document.getElementById("ng-precio")?.value)||0;
-    const u = document.getElementById("ng-unit")?.value||"kg";
-    const hd= document.querySelector('[name="ng-desc"]:checked')?.value==="true";
-    const pG= hd?Math.round(p*0.9*10)/10:p;
-    const s=id=>document.getElementById(id);
-    if(s("prev-emoji")) s("prev-emoji").textContent=e;
-    if(s("prev-nombre")) s("prev-nombre").textContent=n;
-    if(s("prev-precio")) s("prev-precio").textContent=`S/${pG.toFixed(2)}/${u}`;
-    if(s("prev-badge")) s("prev-badge").style.display=hd?"":"none";
-  };
-  ["ng-emoji","ng-nombre","ng-precio","ng-unit"].forEach(id=>document.getElementById(id)?.addEventListener("input",up));
-  document.querySelectorAll('[name="ng-desc"]').forEach(r=>r.addEventListener("change",up));
 }
+
+// URL de foto subida (estado del form)
+let ngFotoUrl = "";
+
+window._ngFotoSeleccionada = async (input) => {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { showToast("⚠ La imagen supera 5MB"); return; }
+
+  // Preview local inmediato
+  const reader = new FileReader();
+  reader.onload = e => {
+    const prev = document.getElementById("ng-foto-preview");
+    const ph   = document.getElementById("ng-foto-placeholder");
+    if (prev) { prev.src = e.target.result; prev.style.display = "block"; }
+    if (ph)   { ph.style.display = "none"; }
+  };
+  reader.readAsDataURL(file);
+
+  // Subir a Cloudinary
+  const prog   = document.getElementById("ng-foto-progreso");
+  const barra  = document.getElementById("ng-foto-barra");
+  const status = document.getElementById("ng-foto-status");
+  const badge  = document.getElementById("ng-foto-badge");
+  if (prog) prog.style.display = "block";
+  ngFotoUrl = "";
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("upload_preset", "grupay_unsigned");
+  formData.append("folder", "grupay/productos");
+
+  try {
+    // Simular progreso mientras sube
+    let fakeP = 0;
+    const tick = setInterval(() => {
+      fakeP = Math.min(fakeP + 12, 85);
+      if (barra) barra.style.width = fakeP + "%";
+    }, 200);
+
+    const res  = await fetch("https://api.cloudinary.com/v1_1/dyi3mbeqo/image/upload", { method:"POST", body:formData });
+    const data = await res.json();
+    clearInterval(tick);
+
+    if (data.secure_url) {
+      ngFotoUrl = data.secure_url;
+      if (barra)  barra.style.width = "100%";
+      if (status) status.textContent = "✅ Foto subida correctamente";
+      if (badge)  badge.style.display = "block";
+      // Cambiar borde del área a verde
+      const area = document.getElementById("ng-foto-area");
+      if (area) area.style.borderColor = "var(--green)";
+      showToast("📸 Foto subida correctamente");
+    } else {
+      throw new Error(data.error?.message || "Sin URL");
+    }
+  } catch(e) {
+    if (barra)  barra.style.width = "0%";
+    if (status) { status.textContent = "❌ Error al subir: " + e.message; status.style.color = "var(--red)"; }
+    showToast("❌ Error al subir foto: " + e.message);
+  }
+};
 
 window._crearGrupo = async () => {
   const nombre = document.getElementById("ng-nombre").value.trim();
@@ -586,121 +472,79 @@ window._crearGrupo = async () => {
   const unit   = document.getElementById("ng-unit").value.trim()||"kg";
   const min    = parseInt(document.getElementById("ng-min").value)||5;
   const zona   = document.getElementById("ng-zona").value.trim();
-  const hasDesc= document.querySelector('[name="ng-desc"]:checked')?.value==="true";
   if (!nombre||isNaN(precio)||precio<=0||!zona) { showToast("⚠ Completa nombre, precio y zona"); return; }
   const btn = document.querySelector(".btn-crear-grupo");
   btn.textContent="Creando..."; btn.disabled=true;
   try {
-    await addDoc(collection(db,"grupay_groups"),{
+    const docData = {
       product_name:nombre, emoji, price_per_unit:precio, unit,
-      min_members:min, current_count:0, status:"open", has_discount:hasDesc,
+      min_members:min, current_count:0, status:"open", has_discount:true,
       zone:zona, delivery_point:zona, created_at:serverTimestamp()
-    });
+    };
+    if (ngFotoUrl) docData.image_url = ngFotoUrl;
+    await addDoc(collection(db,"grupay_groups"), docData);
+    ngFotoUrl = "";
     showToast("🎉 Producto creado"); window._setTab("grupos");
-  } catch(e) {
-    showToast("❌ Error: "+e.message);
-    btn.textContent="🚀 Crear Producto"; btn.disabled=false;
-  }
+  } catch(e) { showToast("❌ Error: "+e.message); btn.textContent="🚀 Crear Producto"; btn.disabled=false; }
 };
 
 // ── TAB SOPORTE ───────────────────────────────────────────────────────────────
 function renderSoporte() {
-  if (activeTab !== "soporte") return;
   const container = document.getElementById("tab-content");
-  const pend  = soportes.filter(s => s.estado === "pendiente");
-  const atend = soportes.filter(s => s.estado === "atendido");
-
+  const pend  = soportes.filter(s => s.estado==="pendiente");
+  const atend = soportes.filter(s => s.estado==="atendido");
   if (!soportes.length) {
     container.innerHTML = `<div class="empty-card"><div class="empty-icon">🙌</div><div class="empty-title">Sin consultas</div><div class="empty-sub">Nadie ha pedido soporte aún</div></div>`;
     return;
   }
-
-  const renderGrupo = (lista, titulo, color) => {
+  const bloque = (lista, titulo, color) => {
     if (!lista.length) return "";
-    return `
-      <div style="font-size:10px;font-weight:900;color:${color};text-transform:uppercase;
-        letter-spacing:2px;font-family:'DM Mono',monospace;margin:14px 0 8px;">${titulo} (${lista.length})</div>
-      ${lista.map(s => {
-        const fecha = s.fecha?.toDate?.() ? formatFecha(s.fecha.toDate()) : "—";
-        const waNum = `51${(s.tel||"").replace(/\D/g,"")}`;
-        const canal = s.canal === "whatsapp_karla" ? "🤖 Karla" : "💬 WA Directo";
-        const esPend = s.estado === "pendiente";
-        return `<div style="background:#fff;border:2px solid ${esPend?"#fde68a":"#e2e8f0"};
-          border-left:4px solid ${esPend?"#d97706":"#22c55e"};
-          border-radius:14px;padding:14px;margin-bottom:10px;
-          box-shadow:0 2px 8px rgba(0,0,0,.04);">
-
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
-            <div>
-              <div style="font-size:15px;font-weight:800;">${s.nombre||"Visitante"}</div>
-              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${canal} · ${fecha}</div>
-              ${s.sector ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">📍 ${s.sector}</div>` : ""}
-              ${s.consulta ? `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12px;color:#334155;font-style:italic;">"${s.consulta}"</div>` : ""}
-            </div>
-            <span style="background:${esPend?"#fef9c3":"#dcfce7"};color:${esPend?"#854d0e":"#15803d"};
-              border:1.5px solid ${esPend?"#fde68a":"#bbf7d0"};font-size:9px;font-weight:800;
-              padding:3px 8px;border-radius:99px;white-space:nowrap;font-family:'DM Mono',monospace;">
-              ${esPend?"⏳ Pendiente":"✅ Atendido"}
-            </span>
+    return `<div style="font-size:10px;font-weight:900;color:${color};text-transform:uppercase;letter-spacing:2px;font-family:'DM Mono',monospace;margin:14px 0 8px;">${titulo} (${lista.length})</div>
+    ${lista.map(s => {
+      const fecha = s.fecha?.toDate?.() ? formatFecha(s.fecha.toDate()) : "—";
+      const waNum = `51${(s.tel||"").replace(/\D/g,"")}`;
+      const esPend = s.estado==="pendiente";
+      return `<div style="background:#fff;border:2px solid ${esPend?"#fde68a":"#e2e8f0"};border-left:4px solid ${esPend?"#d97706":"#22c55e"};border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.04);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+          <div>
+            <div style="font-size:15px;font-weight:800;">${s.nombre||"Visitante"}</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">${s.canal==="whatsapp_karla"?"🤖 Karla":"💬 WA Directo"} · ${fecha}</div>
+            ${s.sector?`<div style="font-size:11px;color:var(--muted);margin-top:2px;">📍 ${s.sector}</div>`:""}
+            ${s.consulta?`<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12px;color:#334155;font-style:italic;">"${s.consulta}"</div>`:""}
           </div>
-
-          <div style="display:flex;gap:8px;">
-            ${s.tel ? `
-              <a href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${s.nombre||''}! 👋 Vi que necesitas ayuda con GruPay. ¿En qué te puedo ayudar?`)}"
-                target="_blank"
-                style="flex:1;padding:10px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
-                border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;
-                text-align:center;text-decoration:none;display:block;">
-                💬 WhatsApp ${s.tel}
-              </a>` : `<div style="flex:1;padding:10px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:10px;font-size:12px;color:var(--muted);text-align:center;">Sin número registrado</div>`}
-            ${esPend ? `
-              <button onclick="window._marcarAtendido('${s._id}')"
-                style="padding:10px 14px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
-                border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">
-                ✅ Marcar atendido
-              </button>` : ""}
-          </div>
-        </div>`;
-      }).join("")}`;
+          <span style="background:${esPend?"#fef9c3":"#dcfce7"};color:${esPend?"#854d0e":"#15803d"};border:1.5px solid ${esPend?"#fde68a":"#bbf7d0"};font-size:9px;font-weight:800;padding:3px 8px;border-radius:99px;white-space:nowrap;font-family:'DM Mono',monospace;">${esPend?"⏳ Pendiente":"✅ Atendido"}</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          ${s.tel?`<a href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${s.nombre||''}! 👋 Vi que necesitas ayuda con GruPay. ¿En qué te puedo ayudar?`)}" target="_blank" style="flex:1;padding:10px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;text-align:center;text-decoration:none;display:block;">💬 WhatsApp ${s.tel}</a>`:`<div style="flex:1;padding:10px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:10px;font-size:12px;color:var(--muted);text-align:center;">Sin número</div>`}
+          ${esPend?`<button onclick="window._marcarAtendido('${s._id}')" style="padding:10px 14px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">✅ Atendido</button>`:""}
+        </div>
+      </div>`;
+    }).join("")}`;
   };
-
-  container.innerHTML =
-    renderGrupo(pend,  "⏳ Pendientes", "#d97706") +
-    renderGrupo(atend, "✅ Atendidos",  "#16a34a");
+  container.innerHTML = bloque(pend,"⏳ Pendientes","#d97706") + bloque(atend,"✅ Atendidos","#16a34a");
 }
 
 window._marcarAtendido = async (id) => {
-  await updateDoc(doc(db, "grupay_soporte", id), {
-    estado: "atendido", atendido_at: serverTimestamp()
-  });
-  showToast("✅ Consulta marcada como atendida");
+  await updateDoc(doc(db,"grupay_soporte",id), { estado:"atendido", atendido_at:serverTimestamp() });
+  showToast("✅ Consulta atendida");
 };
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
 window._setTab = (tab) => {
   activeTab = tab;
-  document.querySelectorAll(".tab-btn").forEach(b =>
-    b.classList.toggle("tab-active", b.dataset.tab === tab));
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("tab-active", b.dataset.tab===tab));
   if (tab==="pagos")   renderPagos();
   if (tab==="grupos")  renderGrupos();
   if (tab==="nuevo")   renderNuevoGrupo();
   if (tab==="soporte") renderSoporte();
 };
 
-window._verCaptura = (url) => {
-  document.getElementById("lightbox-img").src = url;
-  document.getElementById("lightbox").classList.add("on");
-};
+window._verCaptura = (url) => { document.getElementById("lightbox-img").src=url; document.getElementById("lightbox").classList.add("on"); };
 window._cerrarLightbox = () => document.getElementById("lightbox").classList.remove("on");
 
-function formatFecha(d) {
-  return d.toLocaleString("es-PE",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
-}
+function formatFecha(d) { return d.toLocaleString("es-PE",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); }
 let _tt;
-function showToast(msg,dur=3000){
-  const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("on");
-  clearTimeout(_tt); _tt=setTimeout(()=>t.classList.remove("on"),dur);
-}
+function showToast(msg,dur=3000){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(_tt); _tt=setTimeout(()=>t.classList.remove("on"),dur); }
 </script>
 
 <style>
@@ -779,6 +623,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',
   padding:14px;margin-bottom:10px;display:flex;align-items:center;
   gap:12px;cursor:pointer;transition:border-color .2s;box-shadow:0 1px 4px rgba(0,0,0,.04);}
 .grupo-card:hover{border-color:var(--green);}
+.grupo-card-paused{opacity:.7;}
 .grupo-left{display:flex;gap:10px;flex:1;align-items:center;min-width:0;}
 .grupo-emoji{width:42px;height:42px;background:var(--green-l);border:1.5px solid var(--green-b);
   border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
@@ -868,12 +713,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',
       <span class="tab-badge" id="tab-badge-pagos">0</span>
     </button>
     <button class="tab-btn" data-tab="grupos" onclick="window._setTab('grupos')">
-      <span class="tab-icon">📦</span><span>Productos</span>
+      <span class="tab-icon">📦</span><span>Grupos</span>
     </button>
     <button class="tab-btn" data-tab="nuevo" onclick="window._setTab('nuevo')">
       <span class="tab-icon">➕</span><span>Nuevo</span>
     </button>
-    <button class="tab-btn" data-tab="soporte" onclick="window._setTab('soporte')">
+    <button class="tab-btn" data-tab="soporte" onclick="window._setTab('soporte')" style="position:relative;">
       <span class="tab-icon">🎧</span><span>Soporte</span>
       <span class="tab-badge" id="tab-badge-soporte">0</span>
     </button>
