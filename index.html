@@ -159,7 +159,12 @@ function renderPagos() {
                 ${esCarrito ? "🛒" : (p.producto_emoji||"📦")}
               </div>
               <div class="pago-info">
-                <div class="pago-nombre">${p.nombre||"Cliente"}</div>
+                <div class="pago-nombre">
+                  ${p.nombre||"Cliente"}
+                  ${p.es_lider?`<span style="background:#7c3aed;color:#fff;font-size:9px;font-weight:800;padding:2px 7px;border-radius:99px;margin-left:6px;">👑 LÍDER</span>`:""}
+                  ${p.sin_descuento?`<span style="background:#fef3c7;color:#d97706;font-size:9px;font-weight:800;padding:2px 7px;border-radius:99px;margin-left:4px;">⚠ SIN DESC.</span>`:""}
+                  ${p.distancia_lider>1000?`<span style="background:#fee2e2;color:#dc2626;font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;margin-left:4px;">📍 ${(p.distancia_lider/1000).toFixed(1)}km del líder</span>`:(p.distancia_lider>0?`<span style="background:#dcfce7;color:#16a34a;font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;margin-left:4px;">📍 ${p.distancia_lider}m</span>`:"")}
+                </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0;">
                   <a href="https://wa.me/${waNum}" target="_blank"
                     style="background:#dcfce7;color:#15803d;border:1.5px solid #bbf7d0;border-radius:8px;
