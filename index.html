@@ -10,7 +10,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getFirestore, collection, doc,
-  onSnapshot, updateDoc, addDoc, query, where,
+  onSnapshot, updateDoc, addDoc, deleteDoc, query, where,
   orderBy, serverTimestamp, getDocs
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
@@ -244,14 +244,18 @@ window._filtrar = (estado) => {
 
 window._aprobarPedidos = async (idsStr, tel, nombre, monto) => {
   const ids = idsStr.split(",");
-  const card = document.getElementById(`pago-${ids[0]}`);
-  if (card) { card.style.opacity="0.4"; card.style.pointerEvents="none"; }
+  // Actualizar memoria local INMEDIATAMENTE para que el re-render no pierda el card
+  ids.forEach(id => {
+    const card = document.getElementById(`pago-${id}`);
+    if (card) { card.style.opacity="0.4"; card.style.pointerEvents="none"; }
+    const p = pedidos.find(x => x._id === id);
+    if (p) p.payment_status = "verified";
+  });
   try {
     for (const id of ids) {
       await updateDoc(doc(db, "grupay_pedidos", id), {
         payment_status: "verified", verified_at: serverTimestamp()
       });
-      // También actualizar member en subcollección
       const pedido = pedidos.find(p => p._id === id);
       if (pedido?.sector_id && pedido?.producto_id) {
         try {
@@ -265,23 +269,31 @@ window._aprobarPedidos = async (idsStr, tel, nombre, monto) => {
         } catch(e) { console.warn("member update:", e.message); }
       }
     }
-    // Cambiar filtro a "todos" para que el pedido aprobado siga visible
-    filtroEstado = "todos";
-    showToast("✅ Pago aprobado — ya está en pestaña Todos");
+    // Abrir WhatsApp para notificar al cliente
+    const waNum = `51${tel.replace(/\D/g,"")}`;
+    const msg = encodeURIComponent(`✅ *¡Pago aprobado!* 🎉\n\nHola ${nombre}! Tu pago de S/${parseFloat(monto).toFixed(1)} en GruPay fue verificado.\n\n📦 Pronto coordinaremos la entrega contigo.\n\n¡Gracias por confiar en GruPay! 🛒`);
+    window.open(`https://wa.me/${waNum}?text=${msg}`, "_blank");
+    // Volver a filtro pendientes (el aprobado desaparece de aquí, que es lo correcto)
+    filtroEstado = "uploaded";
+    showToast("✅ Pago aprobado — WA de confirmación abierto");
+    renderPagos();
   } catch(e) {
     showToast("❌ Error: " + e.message);
-    if (card) { card.style.opacity="1"; card.style.pointerEvents="auto"; }
+    renderPagos();
   }
 };
 
 window._rechazarPedidos = async (idsStr) => {
   if (!confirm("¿Rechazar este pago?")) return;
-  for (const id of idsStr.split(",")) {
+  const ids = idsStr.split(",");
+  // Actualizar memoria local inmediato
+  ids.forEach(id => { const p = pedidos.find(x=>x._id===id); if(p) p.payment_status="rejected"; });
+  for (const id of ids) {
     await updateDoc(doc(db, "grupay_pedidos", id), { payment_status: "rejected" });
   }
-  // Cambiar filtro a "todos" para que el pedido rechazado siga visible
-  filtroEstado = "todos";
+  filtroEstado = "uploaded";
   showToast("🗑 Pago rechazado");
+  renderPagos();
 };
 
 // ── TAB GRUPOS ────────────────────────────────────────────────────────────────
@@ -290,76 +302,214 @@ function renderGrupos() {
   const lista = Object.values(grupos);
   const container = document.getElementById("tab-content");
   if (!lista.length) {
-    container.innerHTML = `<div class="empty-card"><div class="empty-icon">📦</div><div class="empty-title">Sin grupos</div></div>`;
+    container.innerHTML = `<div class="empty-card"><div class="empty-icon">📦</div><div class="empty-title">Sin productos</div><div class="empty-sub">Crea el primero desde ➕</div></div>`;
     return;
   }
-  const SC = { open:"#f59e0b", active:"#22c55e", cancelled:"#ef4444", completed:"#6366f1" };
-  const SL = { open:"Abierto", active:"Activo", cancelled:"Cancelado", completed:"Completado" };
-  container.innerHTML = lista.map(g => {
-    const col  = SC[g.status]||"#9ca3af";
-    const pend = pedidos.filter(p => p.producto_id===g.id && p.payment_status==="uploaded").length;
-    const verif= pedidos.filter(p => p.producto_id===g.id && p.payment_status==="verified").length;
-    return `<div class="grupo-card" onclick="window._verGrupo('${g.id}')">
-      <div class="grupo-left">
-        <div class="grupo-emoji">${g.emoji||"📦"}</div>
-        <div>
-          <div class="grupo-name">${g.product_name}</div>
-          <div class="grupo-zone">📍 ${g.zone||"—"}</div>
-          <div style="display:flex;gap:6px;margin-top:4px;">
-            ${pend>0?`<span style="background:#fef9c3;color:#854d0e;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">⏳ ${pend} pend.</span>`:""}
-            ${verif>0?`<span style="background:#dcfce7;color:#15803d;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">✅ ${verif} ok</span>`:""}
+
+  const SC = { open:"#f59e0b", active:"#22c55e", paused:"#6366f1", cancelled:"#ef4444", completed:"#6366f1" };
+  const SL = { open:"Abierto", active:"Activo", paused:"⏸ Pausado", cancelled:"Cancelado", completed:"Completado" };
+  const ingresosTotal = pedidos.filter(p=>p.payment_status==="verified").reduce((s,p)=>s+(parseFloat(p.monto)||0),0);
+
+  container.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+      <div style="background:#fff;border:2px solid var(--border);border-radius:12px;padding:12px;text-align:center;">
+        <div style="font-size:20px;font-weight:900;">${lista.length}</div>
+        <div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.5px;margin-top:3px;">Productos</div>
+      </div>
+      <div style="background:#fff;border:2px solid var(--border);border-radius:12px;padding:12px;text-align:center;">
+        <div style="font-size:20px;font-weight:900;color:var(--green);">S/${ingresosTotal.toFixed(0)}</div>
+        <div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.5px;margin-top:3px;">Ingresos aprobados</div>
+      </div>
+    </div>
+    ${lista.map(g => {
+      const col  = SC[g.status]||"#9ca3af";
+      const pend = pedidos.filter(p=>p.producto_id===g.id&&p.payment_status==="uploaded").length;
+      const verif= pedidos.filter(p=>p.producto_id===g.id&&p.payment_status==="verified").length;
+      const isPaused = g.status === "paused";
+      const isCancelled = g.status === "cancelled";
+      return `
+      <div class="grupo-card" style="${isPaused?'opacity:.6':''}">
+        <!-- INFO (click → detalle) -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;cursor:pointer;" onclick="window._verGrupo('${g.id}')">
+          <div class="grupo-emoji" style="opacity:${isPaused?.5:1};">${g.emoji||"📦"}</div>
+          <div style="flex:1;min-width:0;">
+            <div class="grupo-name">${g.product_name}</div>
+            <div class="grupo-zone">📍 ${g.zone||"—"} · ${g.unit||"kg"}</div>
+            <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
+              <span class="grupo-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[g.status]||g.status}</span>
+              ${pend>0?`<span style="background:#fef9c3;color:#854d0e;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">⏳ ${pend} pend.</span>`:""}
+              ${verif>0?`<span style="background:#dcfce7;color:#15803d;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;">✅ ${verif} ok</span>`:""}
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div class="grupo-price">S/${(g.price_per_unit||0).toFixed(1)}</div>
+            <div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;">/${g.unit||"kg"}</div>
           </div>
         </div>
-      </div>
-      <div class="grupo-right">
-        <div class="grupo-status" style="background:${col}22;color:${col};border:1px solid ${col}44">${SL[g.status]||g.status}</div>
-        <div class="grupo-price">S/${(g.price_per_unit||0).toFixed(0)}</div>
-        <div class="grupo-arrow">›</div>
-      </div>
-    </div>`;
-  }).join("");
+
+        <!-- BOTONES ACCIÓN -->
+        <div style="display:flex;gap:6px;border-top:1.5px solid var(--border);padding-top:10px;">
+          <button onclick="window._editarPrecio('${g.id}')"
+            style="flex:1;padding:8px 4px;background:#f1f5f9;color:#334155;border:1.5px solid #e2e8f0;
+            border-radius:9px;font-family:'Syne',sans-serif;font-weight:800;font-size:11px;cursor:pointer;">
+            ✏️ Precio
+          </button>
+          ${!isCancelled?`
+          <button onclick="window._togglePausa('${g.id}','${g.status}')"
+            style="flex:1;padding:8px 4px;
+            background:${isPaused?'#f0fdf4':'#f5f3ff'};
+            color:${isPaused?'#15803d':'#6d28d9'};
+            border:1.5px solid ${isPaused?'#bbf7d0':'#ddd6fe'};
+            border-radius:9px;font-family:'Syne',sans-serif;font-weight:800;font-size:11px;cursor:pointer;">
+            ${isPaused?'▶️ Activar':'⏸ Pausar'}
+          </button>`:""}
+          <button onclick="window._verGrupo('${g.id}')"
+            style="flex:1;padding:8px 4px;background:var(--green-l);color:var(--green-d);
+            border:1.5px solid var(--green-b);border-radius:9px;font-family:'Syne',sans-serif;font-weight:800;font-size:11px;cursor:pointer;">
+            📋 Ver
+          </button>
+          ${isCancelled?`
+          <button onclick="window._eliminarGrupo('${g.id}')"
+            style="padding:8px 10px;background:var(--red-l);color:var(--red);
+            border:1.5px solid var(--red-b);border-radius:9px;font-size:13px;cursor:pointer;">🗑</button>`:""}
+        </div>
+
+        <!-- FORM EDITAR PRECIO (oculto) -->
+        <div id="edit-precio-${g.id}" style="display:none;margin-top:10px;border-top:1.5px solid var(--border);padding-top:10px;">
+          <div style="font-size:10px;font-weight:800;color:var(--muted);margin-bottom:6px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.5px;">
+            Precio actual: S/${(g.price_per_unit||0).toFixed(2)} → nuevo precio
+          </div>
+          <div style="display:flex;gap:8px;">
+            <input id="input-precio-${g.id}" type="number" step="0.5" value="${(g.price_per_unit||0).toFixed(2)}"
+              style="flex:1;padding:10px 12px;border:2px solid var(--green);border-radius:9px;
+              font-size:18px;font-family:'Syne',sans-serif;font-weight:900;color:var(--green-d);outline:none;">
+            <button onclick="window._guardarPrecio('${g.id}')"
+              style="padding:10px 16px;background:var(--green);color:#fff;border:none;border-radius:9px;
+              font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;">Guardar</button>
+            <button onclick="document.getElementById('edit-precio-${g.id}').style.display='none'"
+              style="padding:10px;background:#f1f5f9;color:var(--muted);border:1.5px solid #e2e8f0;border-radius:9px;cursor:pointer;font-size:14px;">✕</button>
+          </div>
+        </div>
+      </div>`;
+    }).join("")}`;
 }
 
+window._editarPrecio = (gid) => {
+  // Cerrar todos los otros formularios abiertos
+  document.querySelectorAll('[id^="edit-precio-"]').forEach(el => el.style.display="none");
+  const el = document.getElementById(`edit-precio-${gid}`);
+  if (el) {
+    el.style.display = "block";
+    const inp = document.getElementById(`input-precio-${gid}`);
+    if (inp) { inp.focus(); inp.select(); }
+  }
+};
+
+window._guardarPrecio = async (gid) => {
+  const input = document.getElementById(`input-precio-${gid}`);
+  const nuevo = parseFloat(input?.value);
+  if (isNaN(nuevo) || nuevo <= 0) { showToast("⚠ Precio inválido"); return; }
+  const anterior = grupos[gid]?.price_per_unit || 0;
+  try {
+    await updateDoc(doc(db,"grupay_groups",gid), {price_per_unit: nuevo});
+    document.getElementById(`edit-precio-${gid}`).style.display = "none";
+    showToast(`✅ Precio: S/${anterior.toFixed(1)} → S/${nuevo.toFixed(1)}`);
+  } catch(e) { showToast("❌ Error: "+e.message); }
+};
+
+window._togglePausa = async (gid, statusActual) => {
+  const esPausado = statusActual === "paused";
+  const msg = esPausado
+    ? "¿Activar este producto? Volverá a aparecer en la app de clientes."
+    : "¿Pausar este producto? Se ocultará en la app de clientes.";
+  if (!confirm(msg)) return;
+  try {
+    await updateDoc(doc(db,"grupay_groups",gid), {status: esPausado ? "open" : "paused"});
+    showToast(esPausado ? "▶️ Producto activado" : "⏸ Producto pausado");
+  } catch(e) { showToast("❌ Error: "+e.message); }
+};
+
+window._eliminarGrupo = async (gid) => {
+  if (!confirm("⚠️ ¿Eliminar permanentemente? Esta acción no se puede deshacer.")) return;
+  try {
+    await deleteDoc(doc(db,"grupay_groups",gid));
+    showToast("🗑 Grupo eliminado");
+  } catch(e) { showToast("❌ Error: "+e.message); }
+};
+
+
+
+
 window._verGrupo = (groupId) => {
-  const g = grupos[groupId];
-  if (!g) return;
+  const g = grupos[groupId]; if(!g) return;
   activeTab = "detalle";
-  const pedidosG = pedidos.filter(p => p.producto_id===groupId);
-  const SC = { uploaded:"#f59e0b", verified:"#22c55e", rejected:"#ef4444" };
-  const SL = { uploaded:"Pendiente", verified:"Aprobado", rejected:"Rechazado" };
+  const pedidosG = pedidos.filter(p=>p.producto_id===groupId);
+  const SC = {uploaded:"#f59e0b",verified:"#22c55e",rejected:"#ef4444"};
+  const SL = {uploaded:"Pendiente",verified:"Aprobado",rejected:"Rechazado"};
+  const ingresosG = pedidosG.filter(p=>p.payment_status==="verified").reduce((s,p)=>s+(parseFloat(p.monto)||0),0);
   document.getElementById("tab-content").innerHTML = `
     <div class="detalle-header">
-      <button class="btn-back" onclick="window._setTab('grupos')">← Grupos</button>
+      <button class="btn-back" onclick="window._setTab('grupos')">← Volver</button>
       <span class="detalle-title">${g.emoji||"📦"} ${g.product_name}</span>
     </div>
     <div class="detalle-stats-row">
       <div class="d-stat"><div class="d-stat-v">${pedidosG.filter(p=>p.payment_status==="verified").length}</div><div class="d-stat-l">Pagados</div></div>
       <div class="d-stat"><div class="d-stat-v">${pedidosG.filter(p=>p.payment_status==="uploaded").length}</div><div class="d-stat-l">Pendientes</div></div>
-      <div class="d-stat"><div class="d-stat-v">S/${(g.price_per_unit||0).toFixed(0)}</div><div class="d-stat-l">Precio</div></div>
+      <div class="d-stat"><div class="d-stat-v">S/${(g.price_per_unit||0).toFixed(1)}</div><div class="d-stat-l">Precio/u</div></div>
+      <div class="d-stat"><div class="d-stat-v">S/${ingresosG.toFixed(0)}</div><div class="d-stat-l">Ingresos</div></div>
     </div>
+
+    <!-- Gestión del producto -->
+    <div style="background:#fff;border:2px solid var(--border);border-radius:14px;padding:14px;margin-bottom:16px;">
+      <div class="section-label" style="margin-bottom:10px;">Gestión del producto</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <button onclick="window._editarPrecio('${groupId}')"
+          style="flex:1;padding:10px 8px;background:var(--green-l);color:var(--green-d);border:2px solid var(--green-b);border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">
+          ✏️ Cambiar precio
+        </button>
+        <button onclick="window._togglePausa('${groupId}','${g.status}')"
+          style="flex:1;padding:10px 8px;background:${g.status==='paused'?'#f0fdf4':'#f5f3ff'};color:${g.status==='paused'?'#15803d':'#6d28d9'};border:2px solid ${g.status==='paused'?'#bbf7d0':'#ddd6fe'};border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">
+          ${g.status==='paused'?'▶️ Activar':'⏸ Pausar'}
+        </button>
+      </div>
+      <!-- Form precio inline -->
+      <div id="edit-precio-${groupId}" style="display:none;background:#f0fdf4;border:2px solid var(--green-b);border-radius:10px;padding:12px;margin-bottom:8px;">
+        <div style="font-size:10px;font-weight:800;color:var(--green-d);margin-bottom:8px;font-family:'DM Mono',monospace;">NUEVO PRECIO (S/)</div>
+        <div style="display:flex;gap:8px;">
+          <input id="input-precio-${groupId}" type="number" step="0.5" value="${(g.price_per_unit||0).toFixed(2)}"
+            style="flex:1;padding:10px;border:2px solid var(--green);border-radius:9px;font-size:18px;font-weight:900;font-family:'Syne',sans-serif;color:var(--green-d);outline:none;">
+          <button onclick="window._guardarPrecio('${groupId}')"
+            style="padding:10px 16px;background:var(--green);color:#fff;border:none;border-radius:9px;font-family:'Syne',sans-serif;font-weight:800;cursor:pointer;">Guardar</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        ${g.status==="open"?`<button onclick="window._forzarActivar('${groupId}')" style="flex:1;padding:10px 8px;background:#fffbeb;color:#d97706;border:2px solid #fde68a;border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">⚡ Activar descuento grupal</button>`:""}
+        ${g.status!=="cancelled"?`<button onclick="window._cancelarGrupo('${groupId}')" style="flex:1;padding:10px 8px;background:var(--red-l);color:var(--red);border:2px solid var(--red-b);border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;cursor:pointer;">❌ Cancelar grupo</button>`:""}
+      </div>
+    </div>
+
     <div class="section-label">Pedidos (${pedidosG.length})</div>
     ${!pedidosG.length
-      ? '<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px;">Sin pedidos aún</div>'
+      ?'<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px;">Sin pedidos aún</div>'
       : pedidosG.map(p => {
           const col=SC[p.payment_status]||"#9ca3af";
+          const waNum=`51${(p.tel||"").replace(/\D/g,"")}`;
           return `<div class="member-row">
-            <div class="member-avatar" style="background:${col}22;color:${col}">${(p.nombre||"?")[0].toUpperCase()}</div>
+            <div class="member-avatar" style="background:${col}22;color:${col};">${(p.nombre||"?")[0].toUpperCase()}</div>
             <div class="member-info">
-              <div class="member-name">${p.nombre||"Cliente"}</div>
+              <div class="member-name">${p.nombre||"Cliente"} ${p.es_lider?"👑":""}</div>
               <div class="member-meta">📱 ${p.tel||"—"} · 📍 ${p.sector||"—"} · S/${parseFloat(p.monto||0).toFixed(1)}</div>
             </div>
-            <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44">${SL[p.payment_status]||p.payment_status}</div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+              <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[p.payment_status]||p.payment_status}</div>
+              <a href="https://wa.me/${waNum}" target="_blank" style="font-size:11px;color:var(--green);text-decoration:none;font-weight:700;">💬 WA</a>
+            </div>
           </div>`;
-        }).join("")}
-    <div class="section-label" style="margin-top:20px;">Acciones</div>
-    <div class="quick-actions">
-      ${g.status==="open"?`<button class="qa-btn qa-green" onclick="window._forzarActivar('${groupId}')">⚡ Activar grupo</button>`:""}
-      ${g.status!=="cancelled"?`<button class="qa-btn qa-red" onclick="window._cancelarGrupo('${groupId}')">❌ Cancelar grupo</button>`:""}
-    </div>`;
+        }).join("")}`;
 };
 
 window._forzarActivar = async (gid) => {
-  if (!confirm("¿Activar el grupo manualmente?")) return;
+  if (!confirm("¿Activar el descuento grupal manualmente?")) return;
   await updateDoc(doc(db,"grupay_groups",gid),{status:"active"});
   showToast("⚡ Grupo activado"); window._setTab("grupos");
 };
@@ -373,21 +523,60 @@ window._cancelarGrupo = async (gid) => {
 function renderNuevoGrupo() {
   document.getElementById("tab-content").innerHTML = `
     <div class="form-section">
-      <div class="form-title">➕ Nuevo Grupo</div>
-      <label class="form-label">Emoji</label>
-      <input id="ng-emoji" class="form-input" placeholder="📦" maxlength="2" value="📦">
-      <label class="form-label">Nombre del producto</label>
-      <input id="ng-nombre" class="form-input" placeholder="Queso Fresco 1kg">
-      <label class="form-label">Precio por unidad (S/)</label>
-      <input id="ng-precio" class="form-input" type="number" placeholder="14.00" step="0.50">
-      <label class="form-label">Unidad (kg, und, 250g…)</label>
-      <input id="ng-unit" class="form-input" placeholder="kg" value="kg">
-      <label class="form-label">Mínimo de personas</label>
-      <input id="ng-min" class="form-input" type="number" value="5" min="2">
-      <label class="form-label">Zona de entrega</label>
-      <input id="ng-zona" class="form-input" placeholder="San Borja">
-      <button class="btn-crear-grupo" onclick="window._crearGrupo()">🚀 Crear Grupo</button>
+      <div class="form-title">➕ Nuevo Producto</div>
+      <div style="display:grid;grid-template-columns:60px 1fr;gap:10px;margin-bottom:14px;">
+        <div><label class="form-label">Emoji</label><input id="ng-emoji" class="form-input" placeholder="📦" maxlength="2" value="📦" style="text-align:center;font-size:22px;padding:10px;"></div>
+        <div><label class="form-label">Nombre del producto</label><input id="ng-nombre" class="form-input" placeholder="Ej: Queso Fresco 1kg"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div><label class="form-label">Precio (S/)</label><input id="ng-precio" class="form-input" type="number" placeholder="14.00" step="0.50"></div>
+        <div><label class="form-label">Unidad</label><input id="ng-unit" class="form-input" placeholder="kg" value="kg"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div><label class="form-label">Mín. personas (10% OFF)</label><input id="ng-min" class="form-input" type="number" value="5" min="2"></div>
+        <div><label class="form-label">Zona de entrega</label><input id="ng-zona" class="form-input" placeholder="Ej: San Borja"></div>
+      </div>
+      <label class="form-label" style="margin-bottom:6px;">¿Aplica descuento grupal del 10%?</label>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <label style="flex:1;display:flex;align-items:center;gap:8px;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:10px;padding:12px;cursor:pointer;">
+          <input type="radio" name="ng-desc" value="true" checked> <span style="font-weight:800;font-size:13px;color:#15803d;">✅ Sí, 10% OFF</span>
+        </label>
+        <label style="flex:1;display:flex;align-items:center;gap:8px;background:#f8fafc;border:2px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;">
+          <input type="radio" name="ng-desc" value="false"> <span style="font-weight:800;font-size:13px;color:var(--muted);">Precio fijo</span>
+        </label>
+      </div>
+      <!-- Preview -->
+      <div style="background:linear-gradient(135deg,#14532d,#166534);border-radius:14px;padding:14px;color:#fff;margin-bottom:16px;">
+        <div style="font-size:9px;opacity:.6;font-family:'DM Mono',monospace;letter-spacing:1.5px;margin-bottom:8px;">PREVIEW EN APP</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="font-size:34px;" id="prev-emoji">📦</div>
+          <div>
+            <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:900;" id="prev-nombre">Nombre del producto</div>
+            <div style="margin-top:4px;display:flex;align-items:center;gap:8px;">
+              <span style="opacity:.85;font-size:14px;font-weight:800;" id="prev-precio">S/0.00/kg</span>
+              <span id="prev-badge" style="background:rgba(255,255,255,.2);font-size:9px;font-weight:800;padding:2px 8px;border-radius:99px;border:1px solid rgba(255,255,255,.3);">10% OFF grupal</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button class="btn-crear-grupo" onclick="window._crearGrupo()">🚀 Crear Producto</button>
     </div>`;
+
+  const up = () => {
+    const e = document.getElementById("ng-emoji")?.value||"📦";
+    const n = document.getElementById("ng-nombre")?.value||"Nombre del producto";
+    const p = parseFloat(document.getElementById("ng-precio")?.value)||0;
+    const u = document.getElementById("ng-unit")?.value||"kg";
+    const hd= document.querySelector('[name="ng-desc"]:checked')?.value==="true";
+    const pG= hd?Math.round(p*0.9*10)/10:p;
+    const s=id=>document.getElementById(id);
+    if(s("prev-emoji")) s("prev-emoji").textContent=e;
+    if(s("prev-nombre")) s("prev-nombre").textContent=n;
+    if(s("prev-precio")) s("prev-precio").textContent=`S/${pG.toFixed(2)}/${u}`;
+    if(s("prev-badge")) s("prev-badge").style.display=hd?"":"none";
+  };
+  ["ng-emoji","ng-nombre","ng-precio","ng-unit"].forEach(id=>document.getElementById(id)?.addEventListener("input",up));
+  document.querySelectorAll('[name="ng-desc"]').forEach(r=>r.addEventListener("change",up));
 }
 
 window._crearGrupo = async () => {
@@ -397,19 +586,20 @@ window._crearGrupo = async () => {
   const unit   = document.getElementById("ng-unit").value.trim()||"kg";
   const min    = parseInt(document.getElementById("ng-min").value)||5;
   const zona   = document.getElementById("ng-zona").value.trim();
-  if (!nombre||!precio||!zona) { showToast("⚠ Completa nombre, precio y zona"); return; }
+  const hasDesc= document.querySelector('[name="ng-desc"]:checked')?.value==="true";
+  if (!nombre||isNaN(precio)||precio<=0||!zona) { showToast("⚠ Completa nombre, precio y zona"); return; }
   const btn = document.querySelector(".btn-crear-grupo");
   btn.textContent="Creando..."; btn.disabled=true;
   try {
     await addDoc(collection(db,"grupay_groups"),{
       product_name:nombre, emoji, price_per_unit:precio, unit,
-      min_members:min, current_count:0, status:"open", has_discount:true,
+      min_members:min, current_count:0, status:"open", has_discount:hasDesc,
       zone:zona, delivery_point:zona, created_at:serverTimestamp()
     });
-    showToast("🎉 Grupo creado"); window._setTab("grupos");
+    showToast("🎉 Producto creado"); window._setTab("grupos");
   } catch(e) {
     showToast("❌ Error: "+e.message);
-    btn.textContent="🚀 Crear Grupo"; btn.disabled=false;
+    btn.textContent="🚀 Crear Producto"; btn.disabled=false;
   }
 };
 
@@ -678,10 +868,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',
       <span class="tab-badge" id="tab-badge-pagos">0</span>
     </button>
     <button class="tab-btn" data-tab="grupos" onclick="window._setTab('grupos')">
-      <span class="tab-icon">📦</span><span>Grupos</span>
+      <span class="tab-icon">📦</span><span>Productos</span>
     </button>
     <button class="tab-btn" data-tab="nuevo" onclick="window._setTab('nuevo')">
       <span class="tab-icon">➕</span><span>Nuevo</span>
+    </button>
+    <button class="tab-btn" data-tab="soporte" onclick="window._setTab('soporte')">
+      <span class="tab-icon">🎧</span><span>Soporte</span>
+      <span class="tab-badge" id="tab-badge-soporte">0</span>
     </button>
   </div>
 </div>
