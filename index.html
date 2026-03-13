@@ -73,12 +73,17 @@ function updateStats() {
 function renderPagos() {
   const container = document.getElementById("tab-content");
   let lista = filtroEstado==="todos" ? pedidos : pedidos.filter(p => p.payment_status===filtroEstado);
+
+  // ✅ CORREGIDO: agrupar carritos por tel + timestamp + sector (no por monto que puede ser "")
   const agrupados = {};
   lista.forEach(p => {
-    const key = p.carrito ? `${p.tel}_${p.monto}_${p.sector}` : p._id;
+    const key = p.carrito
+      ? `${p.tel}_${p.fecha?.seconds || p.fecha || p._id}_${p.sector}`
+      : p._id;
     if (!agrupados[key]) agrupados[key] = [];
     agrupados[key].push(p);
   });
+
   const totalPend  = pedidos.filter(p => p.payment_status==="uploaded").length;
   const totalVerif = pedidos.filter(p => p.payment_status==="verified").length;
   const totalRech  = pedidos.filter(p => p.payment_status==="rejected").length;
@@ -106,10 +111,36 @@ function renderPagos() {
          ${filtroEstado==="uploaded"?`<div class="empty-sub">Todos los pagos están al día 👍</div>`:""}</div>`
       : Object.values(agrupados).map(grupo => {
           const p = grupo[0];
-          const monto = parseFloat(p.monto)||0;
+          const esCarrito = grupo.length > 1;
+
+          // ✅ CORREGIDO: calcular monto real sumando los productos del grupo
+          // Si el monto está guardado correctamente, usarlo; si no, calcularlo desde precio
+          let monto = 0;
+          if (esCarrito) {
+            // Para carritos: sumar todos los montos individuales del grupo
+            monto = grupo.reduce((s, x) => {
+              const m = parseFloat(x.monto);
+              if (!isNaN(m) && m > 0) return s + m;
+              // Fallback: calcular desde precio y descuento
+              const precio = parseFloat(x.precio_normal) || 0;
+              const hasDesc = x.has_discount !== false && !x.sin_descuento;
+              return s + (hasDesc ? Math.round(precio * 0.9 * 10) / 10 : precio);
+            }, 0);
+          } else {
+            // Para pedidos individuales
+            const m = parseFloat(p.monto);
+            if (!isNaN(m) && m > 0) {
+              monto = m;
+            } else {
+              // Fallback: calcular desde precio
+              const precio = parseFloat(p.precio_normal) || 0;
+              const hasDesc = p.has_discount !== false && !p.sin_descuento;
+              monto = hasDesc ? Math.round(precio * 0.9 * 10) / 10 : precio;
+            }
+          }
+
           const fecha = p.fecha?.toDate?.() ? formatFecha(p.fecha.toDate()) : "—";
           const ids   = grupo.map(x=>x._id).join(",");
-          const esCarrito = grupo.length > 1;
           const productos = grupo.map(x=>`<span style="background:#f1f5f9;border-radius:6px;padding:2px 6px;font-size:10px;">${x.producto_emoji||"📦"} ${x.producto_nombre}</span>`).join(" ");
           const estado = p.payment_status;
           const col    = SC[estado]||"#9ca3af";
@@ -119,6 +150,28 @@ function renderPagos() {
             : p.delivery_gratis
               ? `<span style="background:#dcfce7;color:#15803d;border-radius:6px;padding:2px 6px;font-size:10px;">🚚 Delivery GRATIS</span>`
               : "";
+
+          // ✅ Desglose de productos para carritos
+          const desglose = esCarrito ? `
+            <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:10px;">
+              <div style="font-size:9px;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-family:'DM Mono',monospace;">Desglose de productos</div>
+              ${grupo.map(x => {
+                const pr = parseFloat(x.precio_normal) || 0;
+                const hasDesc = x.has_discount !== false && !x.sin_descuento;
+                const pUnit = hasDesc ? Math.round(pr * 0.9 * 10) / 10 : pr;
+                const xMonto = parseFloat(x.monto);
+                const montoFinal = (!isNaN(xMonto) && xMonto > 0) ? xMonto : pUnit;
+                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #e2e8f0;font-size:12px;">
+                  <span>${x.producto_emoji||"📦"} ${x.producto_nombre}</span>
+                  <span style="font-weight:800;color:${hasDesc?'#16a34a':'#1e293b'};">S/${montoFinal.toFixed(1)} ${hasDesc?'<span style="font-size:9px;background:#dcfce7;color:#14532d;padding:1px 4px;border-radius:4px;">10%OFF</span>':''}</span>
+                </div>`;
+              }).join("")}
+              <div style="display:flex;justify-content:space-between;padding-top:6px;font-family:'Syne',sans-serif;font-weight:900;font-size:13px;">
+                <span>Total</span>
+                <span style="color:#16a34a;">S/${monto.toFixed(1)}</span>
+              </div>
+            </div>` : "";
+
           return `<div class="pago-card" style="border-left:4px solid ${col};">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
               <span style="background:${col}18;color:${col};border:1.5px solid ${col}44;font-size:10px;font-weight:800;padding:3px 10px;border-radius:99px;font-family:'DM Mono',monospace;">${SL[estado]||estado}</span>
@@ -141,6 +194,7 @@ function renderPagos() {
               </div>
               <div class="pago-monto" style="color:${col};">S/${monto.toFixed(1)}</div>
             </div>
+            ${desglose}
             <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:12px;">
               <div style="font-size:9px;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-family:'DM Mono',monospace;">Datos de entrega</div>
               <div style="display:flex;flex-direction:column;gap:5px;">
@@ -154,7 +208,7 @@ function renderPagos() {
               : `<div class="no-screenshot">📭 Sin captura de pago</div>`}
             ${estado==="uploaded" ? `
             <div class="pago-actions">
-              <button class="btn-aprobar" onclick="window._aprobarPedidos('${ids}','${p.tel||''}','${p.nombre||''}',${monto})">✅ Aprobar</button>
+              <button class="btn-aprobar" onclick="window._aprobarPedidos('${ids}','${p.tel||''}','${p.nombre||''}',${monto})">✅ Aprobar S/${monto.toFixed(1)}</button>
               <button class="btn-rechazar" onclick="window._rechazarPedidos('${ids}')">❌ Rechazar</button>
               <a class="btn-wa-pago" href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Vi tu pedido de GruPay por S/${monto.toFixed(1)}. ¿Tienes alguna consulta?`)}" target="_blank">💬</a>
             </div>` : `
@@ -173,7 +227,6 @@ window._filtrar = (estado) => { filtroEstado = estado; renderPagos(); };
 
 window._aprobarPedidos = async (idsStr, tel, nombre, monto) => {
   const ids = idsStr.split(",");
-  // Deshabilitar botones sin ocultar la card — el onSnapshot la actualizará solo
   document.querySelectorAll(".btn-aprobar,.btn-rechazar").forEach(b => { b.disabled=true; b.style.opacity="0.5"; });
   try {
     for (const id of ids) {
@@ -265,7 +318,6 @@ window._verGrupo = (groupId) => {
       <div class="d-stat"><div class="d-stat-v" style="color:${isPaused?'#64748b':'#16a34a'}">${isPaused?"⏸":"🟢"}</div><div class="d-stat-l">Estado</div></div>
     </div>
 
-    <!-- ✏️ EDITOR DE PRODUCTO -->
     <div style="background:#fff;border:2px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <div style="font-size:11px;font-weight:900;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;font-family:'DM Mono',monospace;">✏️ Editar producto</div>
@@ -276,29 +328,15 @@ window._verGrupo = (groupId) => {
         </button>
       </div>
       <div style="display:grid;grid-template-columns:56px 1fr;gap:10px;margin-bottom:10px;">
-        <div>
-          <label class="form-label">Emoji</label>
-          <input id="ed-emoji" class="form-input" value="${g.emoji||'📦'}" maxlength="2" style="text-align:center;font-size:20px;padding:8px;margin-bottom:0;">
-        </div>
-        <div>
-          <label class="form-label">Nombre</label>
-          <input id="ed-nombre" class="form-input" value="${g.product_name||''}" style="margin-bottom:0;">
-        </div>
+        <div><label class="form-label">Emoji</label><input id="ed-emoji" class="form-input" value="${g.emoji||'📦'}" maxlength="2" style="text-align:center;font-size:20px;padding:8px;margin-bottom:0;"></div>
+        <div><label class="form-label">Nombre</label><input id="ed-nombre" class="form-input" value="${g.product_name||''}" style="margin-bottom:0;"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-        <div>
-          <label class="form-label">💰 Precio (S/)</label>
-          <input id="ed-precio" class="form-input" type="number" step="0.50" value="${g.price_per_unit||0}" style="margin-bottom:0;">
-        </div>
-        <div>
-          <label class="form-label">📏 Unidad</label>
-          <input id="ed-unit" class="form-input" value="${g.unit||'kg'}" style="margin-bottom:0;">
-        </div>
+        <div><label class="form-label">💰 Precio (S/)</label><input id="ed-precio" class="form-input" type="number" step="0.50" value="${g.price_per_unit||0}" style="margin-bottom:0;"></div>
+        <div><label class="form-label">📏 Unidad</label><input id="ed-unit" class="form-input" value="${g.unit||'kg'}" style="margin-bottom:0;"></div>
       </div>
       <label class="form-label">📍 Zona</label>
       <input id="ed-zona" class="form-input" value="${g.zone||''}" style="margin-bottom:10px;">
-
-      <!-- FOTO DEL PRODUCTO (edición) -->
       <label class="form-label">📷 Foto del producto</label>
       <div id="ed-foto-area" onclick="document.getElementById('ed-foto-input').click()"
         style="border:2.5px dashed var(--border);border-radius:14px;background:#f8fafc;
@@ -315,8 +353,7 @@ window._verGrupo = (groupId) => {
              <img id="ed-foto-preview" src="" style="display:none;width:100%;height:120px;object-fit:cover;border-radius:11px;">`
         }
       </div>
-      <input id="ed-foto-input" type="file" accept="image/*" style="display:none"
-        onchange="window._edFotoSeleccionada(this,'${g.id}')">
+      <input id="ed-foto-input" type="file" accept="image/*" style="display:none" onchange="window._edFotoSeleccionada(this,'${g.id}')">
       <div id="ed-foto-progreso" style="display:none;margin-bottom:8px;">
         <div style="background:#e2e8f0;border-radius:99px;height:6px;overflow:hidden;">
           <div id="ed-foto-barra" style="height:100%;background:var(--green);width:0%;transition:width .3s;border-radius:99px;"></div>
@@ -325,7 +362,6 @@ window._verGrupo = (groupId) => {
       </div>
     </div>
 
-    <!-- ACCIONES RÁPIDAS -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px;">
       ${isPaused
         ? `<button onclick="window._reactivarGrupo('${groupId}')" style="padding:12px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;">▶️ Reactivar</button>`
@@ -333,18 +369,20 @@ window._verGrupo = (groupId) => {
       <button onclick="window._eliminarGrupo('${groupId}')" style="padding:12px;background:#fef2f2;color:#dc2626;border:2px solid #fecaca;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;">🗑 Eliminar</button>
     </div>
 
-    <!-- PEDIDOS DEL GRUPO -->
     <div class="section-label">Pedidos (${pedidosG.length})</div>
     ${!pedidosG.length
       ? '<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px;">Sin pedidos aún</div>'
       : pedidosG.map(p => {
           const col = SC[p.payment_status]||"#9ca3af";
           const waNum = `51${(p.tel||"").replace(/\D/g,"")}`;
+          // ✅ Calcular monto con fallback
+          const pm = parseFloat(p.monto);
+          const pMonto = (!isNaN(pm) && pm > 0) ? pm : (parseFloat(p.precio_normal)||0) * (p.has_discount&&!p.sin_descuento ? 0.9 : 1);
           return `<div class="member-row">
             <div class="member-avatar" style="background:${col}22;color:${col}">${(p.nombre||"?")[0].toUpperCase()}</div>
             <div class="member-info">
               <div class="member-name">${p.nombre||"Cliente"}${p.es_lider?`<span style="background:#7c3aed;color:#fff;font-size:8px;font-weight:800;padding:1px 5px;border-radius:4px;margin-left:4px;">LÍDER</span>`:""}</div>
-              <div class="member-meta"><a href="https://wa.me/${waNum}" target="_blank" style="color:var(--green);text-decoration:none;">📱 ${p.tel||"—"}</a> · 📍 ${p.sector||"—"} · S/${parseFloat(p.monto||0).toFixed(1)}</div>
+              <div class="member-meta"><a href="https://wa.me/${waNum}" target="_blank" style="color:var(--green);text-decoration:none;">📱 ${p.tel||"—"}</a> · 📍 ${p.sector||"—"} · S/${pMonto.toFixed(1)}</div>
             </div>
             <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[p.payment_status]||p.payment_status}</div>
           </div>`;
@@ -361,7 +399,6 @@ window._edFotoSeleccionada = async (input, gid) => {
   const btnGuardar = document.querySelector("button[onclick*='_guardarProducto']");
   if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.textContent = "⏳ Subiendo foto..."; }
   edFotoSubiendo = true;
-
   const reader = new FileReader();
   reader.onload = e => {
     const prev = document.getElementById("ed-foto-preview");
@@ -370,18 +407,15 @@ window._edFotoSeleccionada = async (input, gid) => {
     if (ph)   { ph.style.display = "none"; }
   };
   reader.readAsDataURL(file);
-
   const prog   = document.getElementById("ed-foto-progreso");
   const barra  = document.getElementById("ed-foto-barra");
   const status = document.getElementById("ed-foto-status");
   if (prog) prog.style.display = "block";
   edFotoUrl = "";
-
   const formData = new FormData();
   formData.append("file", file);
   formData.append("upload_preset", "grupay_unsigned");
   formData.append("folder", "grupay/productos");
-
   try {
     let fakeP = 0;
     const tick = setInterval(() => { fakeP = Math.min(fakeP + 12, 85); if (barra) barra.style.width = fakeP + "%"; }, 200);
@@ -425,7 +459,7 @@ window._guardarProducto = async (gid) => {
 };
 
 window._pausarGrupo = async (gid) => {
-  if (!confirm("¿Pausar este producto? Los clientes no podrán hacer pedidos nuevos.")) return;
+  if (!confirm("¿Pausar este producto?")) return;
   await updateDoc(doc(db,"grupay_groups",gid), { status:"paused" });
   showToast("⏸ Producto pausado"); window._setTab("grupos");
 };
@@ -448,8 +482,6 @@ function renderNuevoGrupo() {
   document.getElementById("tab-content").innerHTML = `
     <div class="form-section">
       <div class="form-title">➕ Nuevo Producto</div>
-
-      <!-- FOTO DEL PRODUCTO -->
       <label class="form-label">📷 Foto del producto</label>
       <div id="ng-foto-area" onclick="document.getElementById('ng-foto-input').click()"
         style="border:2.5px dashed var(--border);border-radius:14px;background:#f8fafc;
@@ -460,22 +492,18 @@ function renderNuevoGrupo() {
           <div style="font-size:13px;font-weight:800;color:var(--muted);">Toca para subir foto</div>
           <div style="font-size:11px;color:var(--subtle);margin-top:4px;">JPG, PNG, WEBP · máx 5MB</div>
         </div>
-        <img id="ng-foto-preview" src="" alt=""
-          style="display:none;width:100%;height:160px;object-fit:cover;border-radius:11px;">
+        <img id="ng-foto-preview" src="" alt="" style="display:none;width:100%;height:160px;object-fit:cover;border-radius:11px;">
         <div id="ng-foto-badge" style="display:none;position:absolute;bottom:8px;right:8px;
           background:var(--green);color:#fff;font-size:10px;font-weight:800;padding:3px 10px;
           border-radius:99px;font-family:'DM Mono',monospace;">✅ FOTO LISTA</div>
       </div>
-      <input id="ng-foto-input" type="file" accept="image/*" style="display:none"
-        onchange="window._ngFotoSeleccionada(this)">
+      <input id="ng-foto-input" type="file" accept="image/*" style="display:none" onchange="window._ngFotoSeleccionada(this)">
       <div id="ng-foto-progreso" style="display:none;margin-bottom:10px;">
         <div style="background:#e2e8f0;border-radius:99px;height:6px;overflow:hidden;">
           <div id="ng-foto-barra" style="height:100%;background:var(--green);width:0%;transition:width .3s;border-radius:99px;"></div>
         </div>
         <div id="ng-foto-status" style="font-size:11px;color:var(--muted);margin-top:4px;font-family:'DM Mono',monospace;">Subiendo...</div>
       </div>
-
-      <!-- DATOS BÁSICOS -->
       <div style="display:grid;grid-template-columns:64px 1fr;gap:10px;margin-bottom:14px;">
         <div><label class="form-label">Emoji</label><input id="ng-emoji" class="form-input" placeholder="📦" maxlength="2" value="📦" style="text-align:center;font-size:20px;padding:8px;margin-bottom:0;"></div>
         <div><label class="form-label">Nombre del producto</label><input id="ng-nombre" class="form-input" placeholder="Queso Fresco 1kg" style="margin-bottom:0;"></div>
@@ -492,7 +520,6 @@ function renderNuevoGrupo() {
     </div>`;
 }
 
-// URL de foto subida (estado del form)
 let ngFotoUrl = "";
 let ngFotoSubiendo = false;
 
@@ -500,12 +527,9 @@ window._ngFotoSeleccionada = async (input) => {
   const file = input.files[0];
   if (!file) return;
   if (file.size > 5 * 1024 * 1024) { showToast("⚠ La imagen supera 5MB"); return; }
-  // Bloquear botón crear mientras sube
   const btnCrear = document.querySelector(".btn-crear-grupo");
   if (btnCrear) { btnCrear.disabled = true; btnCrear.textContent = "⏳ Subiendo foto..."; }
   ngFotoSubiendo = true;
-
-  // Preview local inmediato
   const reader = new FileReader();
   reader.onload = e => {
     const prev = document.getElementById("ng-foto-preview");
@@ -514,55 +538,39 @@ window._ngFotoSeleccionada = async (input) => {
     if (ph)   { ph.style.display = "none"; }
   };
   reader.readAsDataURL(file);
-
-  // Subir a Cloudinary
   const prog   = document.getElementById("ng-foto-progreso");
   const barra  = document.getElementById("ng-foto-barra");
   const status = document.getElementById("ng-foto-status");
   const badge  = document.getElementById("ng-foto-badge");
   if (prog) prog.style.display = "block";
   ngFotoUrl = "";
-
   const formData = new FormData();
   formData.append("file", file);
   formData.append("upload_preset", "grupay_unsigned");
   formData.append("folder", "grupay/productos");
-
   try {
-    // Simular progreso mientras sube
     let fakeP = 0;
-    const tick = setInterval(() => {
-      fakeP = Math.min(fakeP + 12, 85);
-      if (barra) barra.style.width = fakeP + "%";
-    }, 200);
-
+    const tick = setInterval(() => { fakeP = Math.min(fakeP + 12, 85); if (barra) barra.style.width = fakeP + "%"; }, 200);
     const res  = await fetch("https://api.cloudinary.com/v1_1/dyi3mbeqo/image/upload", { method:"POST", body:formData });
     const data = await res.json();
     clearInterval(tick);
-
     if (data.secure_url) {
       ngFotoUrl = data.secure_url;
       ngFotoSubiendo = false;
-      console.log("✅ Cloudinary URL guardada:", ngFotoUrl);
       if (barra)  barra.style.width = "100%";
       if (status) status.textContent = "✅ Foto subida correctamente";
       if (badge)  badge.style.display = "block";
       const area = document.getElementById("ng-foto-area");
       if (area) area.style.borderColor = "var(--green)";
       showToast("📸 Foto subida correctamente");
-      // Desbloquear botón crear
       const btnCrear = document.querySelector(".btn-crear-grupo");
       if (btnCrear) { btnCrear.disabled = false; btnCrear.textContent = "🚀 Crear Producto"; }
-    } else {
-      throw new Error(data.error?.message || "Sin URL de Cloudinary");
-    }
+    } else { throw new Error(data.error?.message || "Sin URL de Cloudinary"); }
   } catch(e) {
     ngFotoSubiendo = false;
     if (barra)  barra.style.width = "0%";
     if (status) { status.textContent = "❌ Error al subir: " + e.message; status.style.color = "var(--red)"; }
     showToast("❌ Error al subir foto: " + e.message);
-    console.error("❌ Error Cloudinary:", e.message);
-    // Desbloquear botón aunque haya error
     const btnCrear = document.querySelector(".btn-crear-grupo");
     if (btnCrear) { btnCrear.disabled = false; btnCrear.textContent = "🚀 Crear Producto"; }
   }
@@ -586,7 +594,6 @@ window._crearGrupo = async () => {
       zone:zona, delivery_point:zona, created_at:serverTimestamp(),
       image_url: ngFotoUrl || ""
     };
-    console.log("📦 Guardando producto en Firestore con image_url:", docData.image_url);
     await addDoc(collection(db,"grupay_groups"), docData);
     ngFotoUrl = "";
     showToast("🎉 Producto creado"); window._setTab("grupos");
@@ -678,8 +685,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',
 .stat-num{font-size:22px;font-weight:900;line-height:1;}
 .stat-num.amber{color:var(--amber);}
 .stat-num.green{color:var(--green);}
-.stat-lbl{font-size:8px;color:var(--muted);font-family:'DM Mono',monospace;
-  text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
 .scroll-area{flex:1;overflow-y:auto;padding:14px;background:var(--bg);}
 .tabs{display:flex;border-top:2px solid var(--border);flex-shrink:0;background:#fff;}
 .tab-btn{flex:1;padding:11px 4px 10px;background:none;border:none;
@@ -701,9 +706,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',
   border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;}
 .pago-info{flex:1;}
 .pago-nombre{font-size:15px;font-weight:800;margin-bottom:2px;}
-.pago-grupo{font-size:11px;color:var(--muted);margin-bottom:2px;}
-.pago-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;}
-.pago-tel,.pago-hora{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;}
 .pago-monto{font-size:24px;font-weight:900;color:var(--amber);flex-shrink:0;}
 .screenshot-wrap{position:relative;border-radius:12px;overflow:hidden;
   margin-bottom:12px;cursor:pointer;border:2px solid var(--border);}
@@ -728,7 +730,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',
   padding:14px;margin-bottom:10px;display:flex;align-items:center;
   gap:12px;cursor:pointer;transition:border-color .2s;box-shadow:0 1px 4px rgba(0,0,0,.04);}
 .grupo-card:hover{border-color:var(--green);}
-.grupo-card-paused{opacity:.7;}
 .grupo-left{display:flex;gap:10px;flex:1;align-items:center;min-width:0;}
 .grupo-emoji{width:42px;height:42px;background:var(--green-l);border:1.5px solid var(--green-b);
   border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
@@ -758,12 +759,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Syne',
 .member-meta{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;}
 .member-status{font-size:9px;font-weight:800;padding:3px 9px;border-radius:6px;
   white-space:nowrap;font-family:'DM Mono',monospace;}
-.quick-actions{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
-.qa-btn{padding:13px;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;
-  font-size:13px;cursor:pointer;text-align:center;text-decoration:none;
-  display:block;border:2px solid transparent;}
-.qa-green{background:var(--green-l);color:var(--green-d);border-color:var(--green-b);}
-.qa-red{background:var(--red-l);color:var(--red);border-color:var(--red-b);}
 .form-section{padding-bottom:24px;}
 .form-title{font-size:18px;font-weight:900;margin-bottom:20px;}
 .form-label{font-size:11px;font-weight:700;color:var(--muted);display:block;
