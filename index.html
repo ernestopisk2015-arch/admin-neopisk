@@ -210,14 +210,16 @@ function renderPagos() {
             <div class="pago-actions">
               <button class="btn-aprobar" onclick="window._aprobarPedidos('${ids}','${p.tel||''}','${p.nombre||''}',${monto})">✅ Aprobar S/${monto.toFixed(1)}</button>
               <button class="btn-rechazar" onclick="window._rechazarPedidos('${ids}')">❌ Rechazar</button>
+              <button onclick="window._borrarPedidosGrupo('${ids}')" style="flex:0 0 40px;padding:12px 8px;background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca;border-radius:10px;font-size:14px;cursor:pointer;">🗑</button>
               <a class="btn-wa-pago" href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Vi tu pedido de GruPay por S/${monto.toFixed(1)}. ¿Tienes alguna consulta?`)}" target="_blank">💬</a>
             </div>` : `
             <div style="margin-top:8px;">
               <a href="https://wa.me/${waNum}?text=${encodeURIComponent(`Hola ${p.nombre||''}! 👋 Te escribo por tu pedido de GruPay.`)}" target="_blank"
-                style="display:block;padding:10px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
+                style="flex:1;display:block;padding:10px;background:#f0fdf4;color:#15803d;border:2px solid #bbf7d0;
                 border-radius:10px;font-family:'Syne',sans-serif;font-weight:800;font-size:12px;text-align:center;text-decoration:none;">
-                💬 Contactar por WhatsApp
+                💬 Contactar
               </a>
+              <button onclick="window._borrarPedidosGrupo('${ids}')" style="padding:10px 14px;background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca;border-radius:10px;font-size:14px;cursor:pointer;">🗑</button>
             </div>`}
           </div>`;
         }).join("")}`;
@@ -369,7 +371,10 @@ window._verGrupo = (groupId) => {
       <button onclick="window._eliminarGrupo('${groupId}')" style="padding:12px;background:#fef2f2;color:#dc2626;border:2px solid #fecaca;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;font-size:13px;cursor:pointer;">🗑 Eliminar</button>
     </div>
 
-    <div class="section-label">Pedidos (${pedidosG.length})</div>
+    <div class="section-label" style="margin-bottom:8px;">📍 Sectores del grupo</div>
+    <div id="sectores-admin-${groupId}"><div style="font-size:12px;color:var(--muted);text-align:center;padding:10px;">Cargando...</div></div>
+
+    <div class="section-label" style="margin-top:16px;">Pedidos (${pedidosG.length})</div>
     ${!pedidosG.length
       ? '<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px;">Sin pedidos aún</div>'
       : pedidosG.map(p => {
@@ -384,9 +389,13 @@ window._verGrupo = (groupId) => {
               <div class="member-name">${p.nombre||"Cliente"}${p.es_lider?`<span style="background:#7c3aed;color:#fff;font-size:8px;font-weight:800;padding:1px 5px;border-radius:4px;margin-left:4px;">LÍDER</span>`:""}</div>
               <div class="member-meta"><a href="https://wa.me/${waNum}" target="_blank" style="color:var(--green);text-decoration:none;">📱 ${p.tel||"—"}</a> · 📍 ${p.sector||"—"} · S/${pMonto.toFixed(1)}</div>
             </div>
-            <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[p.payment_status]||p.payment_status}</div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+              <div class="member-status" style="background:${col}22;color:${col};border:1px solid ${col}44;">${SL[p.payment_status]||p.payment_status}</div>
+              <button onclick="window._borrarPedido('${p._id}')" style="background:none;border:none;color:#ef4444;font-size:11px;cursor:pointer;">🗑 Borrar</button>
+            </div>
           </div>`;
         }).join("")}`;
+  setTimeout(() => cargarSectoresAdmin(groupId), 300);
 };
 
 let edFotoUrl = "";
@@ -467,6 +476,58 @@ window._pausarGrupo = async (gid) => {
 window._reactivarGrupo = async (gid) => {
   await updateDoc(doc(db,"grupay_groups",gid), { status:"open" });
   showToast("▶️ Producto reactivado"); window._setTab("grupos");
+};
+
+window._borrarPedido = async (pedidoId) => {
+  if (!confirm('¿Borrar este pedido?')) return;
+  try {
+    await deleteDoc(doc(db,'grupay_pedidos',pedidoId));
+    showToast('🗑 Pedido eliminado');
+  } catch(e) { showToast('❌ '+e.message); }
+};
+
+window._borrarPedidosGrupo = async (idsStr) => {
+  if (!confirm('¿Borrar este(s) pedido(s)? Esta acción no se puede deshacer.')) return;
+  const ids = idsStr.split(',');
+  try {
+    for (const id of ids) await deleteDoc(doc(db,'grupay_pedidos',id));
+    showToast('🗑 '+ids.length+' pedido(s) eliminado(s)');
+  } catch(e) { showToast('❌ '+e.message); }
+};
+
+window._borrarSector = async (groupId, sectorId, sectorNombre) => {
+  if (!confirm('¿Borrar el sector "'+sectorNombre+'"?')) return;
+  try {
+    const mSnap = await getDocs(collection(db,'grupay_groups',groupId,'sectors',sectorId,'members'));
+    for (const m of mSnap.docs) await deleteDoc(m.ref);
+    await deleteDoc(doc(db,'grupay_groups',groupId,'sectors',sectorId));
+    showToast('🗑 Sector eliminado');
+    cargarSectoresAdmin(groupId);
+  } catch(e) { showToast('❌ '+e.message); }
+};
+
+window.cargarSectoresAdmin = async (groupId) => {
+  const el = document.getElementById('sectores-admin-'+groupId);
+  if (!el) return;
+  try {
+    const snap = await getDocs(collection(db,'grupay_groups',groupId,'sectors'));
+    if (!snap.empty) {
+      el.innerHTML = snap.docs.map(d => {
+        const s = d.data();
+        const nom = (s.sector_name||d.id).replace(/'/g,"\\'");
+        return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:6px;">'
+          +'<div><div style="font-size:13px;font-weight:700;">📍 '+(s.sector_name||d.id)+'</div>'
+          +'<div style="font-size:11px;color:#64748b;">👥 '+(s.member_count||0)+'/5 miembros</div></div>'
+          +'<button onclick="window._borrarSector(\''+groupId+'\',\''+d.id+'\',\''+nom+'\')"
+            style="background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca;border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">🗑 Borrar</button>'
+          +'</div>';
+      }).join('');
+    } else {
+      el.innerHTML = '<div style="font-size:12px;color:#64748b;text-align:center;padding:10px;">Sin sectores</div>';
+    }
+  } catch(e) {
+    if (el) el.innerHTML = '<div style="font-size:12px;color:#64748b;">Error cargando</div>';
+  }
 };
 
 window._eliminarGrupo = async (gid) => {
